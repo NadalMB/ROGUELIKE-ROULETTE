@@ -120,10 +120,19 @@ SOUND_FAIL = generate_fail_sound()
 CLICK_POOL_SINGLE = [generate_click_sound(f, False) for f in [0.9, 0.95, 1.0, 1.05, 1.1]]
 CLICK_POOL_DUAL = [generate_click_sound(f, True) for f in [0.85, 0.9, 0.95, 1.0, 1.05]]
 
+MASTER_VOLUME = 1.0
+SFX_VOLUME = 1.0
+MUSIC_VOLUME = 1.0
+
+def play_sound(sound):
+    sound.set_volume(MASTER_VOLUME * SFX_VOLUME)
+    sound.play()
+
 def play_dynamic_click(velocity, is_dual=False):
     factor = max(0.75, min(1.2, velocity / 40.0))
     pool = CLICK_POOL_DUAL if is_dual else CLICK_POOL_SINGLE
     sound = random.choice(pool)
+    sound.set_volume(MASTER_VOLUME * SFX_VOLUME)
     sound.play()
 
 _FONT_CACHE = {}
@@ -327,26 +336,16 @@ class PygameMathRoulette:
         
         self.has_pack_upgrade = False
         self.has_shop_upgrade = False
-        self.has_dual_roulette = False
+        self.dual_roulette_count = 0
         self.extra_spins_per_round = 0
         
         self.is_spinning = False
-        self.roulette_1_active = False
-        self.roulette_2_active = False
         
         self.relic_slots = 3
         self._compute_layout()
         self.card_width = max(120, min(165, int(SCREEN_WIDTH * 0.095)))
         self.card_height = max(95, min(120, int(self.canvas_height * 0.52)))
         self.card_step = self.card_width + CARD_SPACING
-        
-        self.position = 0.0
-        self.velocity = 0.0
-        self.last_card_trigger = -1
-        
-        self.position_dual = 0.0
-        self.velocity_dual = 0.0
-        self.last_card_trigger_dual = -1
         
         self.friction = 0.968
         self.min_velocity = 0.30
@@ -369,6 +368,8 @@ class PygameMathRoulette:
         self.tooltip_queue = []
         
         self.overlay_open = False
+        self.menu_open = False
+        self.settings_open = False
         self.booster_options = []       
         self.booster_buttons = []
         self.booster_clickable_cards = []
@@ -379,9 +380,10 @@ class PygameMathRoulette:
         self.has_won = False
         self.upgrade_anim = None
         self.RELICS_POOL = {
-            "tarjeta_clonada": {"name": "Tarjeta Clonada", "desc": "Permite saldo negativo de hasta -15 CR.", "price": 12, "rarity": "Raro"},
-            "segunda_oportunidad": {"name": "Segunda Oportunidad", "desc": "10% de probabilidad de evadir una casilla negativa y repetir el giro sin coste.", "price": 20, "rarity": "Épico"},
-            "mejora_progresiva": {"name": "Mejora Progresiva", "desc": "Al tocar una casilla positiva Común o Raro, mejora permanentemente al siguiente escalón.", "price": 28, "rarity": "Épico"}
+            "tarjeta_clonada": {"name": "Tarjeta Clonada", "desc": "Permite saldo negativo de hasta -15 $.", "price": 12, "rarity": "Raro"},
+            "segunda_oportunidad": {"name": "Segunda Oportunidad", "desc": "10% de probabilidad de evadir una casilla negativa y repetir el giro sin coste.", "price": 20, "rarity": "Raro"},
+            "mejora_progresiva": {"name": "Mejora Progresiva", "desc": "Al tocar una casilla positiva Común o Raro, mejora permanentemente al siguiente escalón.", "price": 28, "rarity": "Épico"},
+            "duplicador_cuantico": {"name": "Duplicador Cuántico", "desc": "Los vales repetidos pueden aparecer en sobres. Permite acumular copias extra de vales.", "price": 40, "rarity": "Rainbow"}
         }
         self.UPGRADE_MAP = {
             "+1 [CR]": {"type": "add", "value": 2, "name": "+2 [CR]", "rarity": "Común"},
@@ -390,9 +392,164 @@ class PygameMathRoulette:
             "+5 [CR]": {"type": "add", "value": 7, "name": "+7 [CR]", "rarity": "Raro"},
             "+7 [CR]": {"type": "add", "value": 10, "name": "+10 [CR]", "rarity": "Épico"},
         }
-        
+
+        self.game_state = "menu"  # "menu" | "playing" | "game_over" | "won"
+        self.main_menu_buttons = []
+        self.menu_particles = []
+        self._music_started = False
+        self._music_current_vol = 0.0
+        self._music_target_vol = 0.0
+        self._dragging_slider = None
+        self._play_music()
+
+    def _start_new_game(self):
+        self.game_state = "playing"
+        self.menu_open = False
+        self.settings_open = False
         self.init_game_data()
         self.build_ui_buttons()
+        self._play_music()
+        self._set_music_state(True)
+
+    def _play_music(self):
+        if self._music_started:
+            return
+        try:
+            music_dir = os.path.join(os.path.dirname(__file__), "media", "music")
+            if os.path.isdir(music_dir):
+                files = [f for f in os.listdir(music_dir) if f.endswith(('.mp3', '.ogg', '.wav'))]
+                if files:
+                    path = os.path.join(music_dir, random.choice(files))
+                    pygame.mixer.music.load(path)
+                    self._music_current_vol = 0.0
+                    self._set_music_state(False)
+                    pygame.mixer.music.set_volume(self._music_current_vol)
+                    pygame.mixer.music.play(-1, fade_ms=4000)
+                    self._music_started = True
+        except:
+            pass
+
+    def _set_music_state(self, in_game):
+        if in_game:
+            self._music_target_vol = MASTER_VOLUME * MUSIC_VOLUME * 0.85
+        else:
+            self._music_target_vol = MASTER_VOLUME * MUSIC_VOLUME * 0.15
+
+    def _stop_music(self):
+        self._set_music_state(False)
+
+    def _update_music_volume(self):
+        if not self._music_started:
+            return
+        diff = self._music_target_vol - self._music_current_vol
+        if abs(diff) > 0.001:
+            self._music_current_vol += diff * 0.04
+            self._music_current_vol = max(0.0, min(MASTER_VOLUME * MUSIC_VOLUME, self._music_current_vol))
+            pygame.mixer.music.set_volume(self._music_current_vol)
+
+    def _draw_main_menu(self, surface):
+        self.anim_tick += 0.03
+        for star in self.stars:
+            star["y"] += star["spd"] * 1.5
+            if star["y"] > SCREEN_HEIGHT:
+                star["y"] = 0
+                star["x"] = random.randint(0, SCREEN_WIDTH)
+        surface.fill(BG_DARK_MAIN)
+        mouse_pos = pygame.mouse.get_pos()
+
+        for star in self.stars:
+            alpha = 80 + int(40 * math.sin(self.anim_tick + star["x"] * 0.01))
+            pygame.draw.circle(surface, (alpha, alpha, min(255, alpha + 40)), (int(star["x"]), int(star["y"])), star["size"])
+
+        for p in self.menu_particles:
+            p["x"] += p["vx"]
+            p["y"] += p["vy"]
+            p["life"] -= 0.01
+            if p["life"] > 0:
+                c = rainbow_color(self.anim_tick + p["offset"])
+                pygame.draw.circle(surface, c, (int(p["x"]), int(p["y"])), int(p["r"] * p["life"]))
+        self.menu_particles = [p for p in self.menu_particles if p["life"] > 0]
+        if random.random() < 0.15:
+            self.menu_particles.append({
+                "x": random.randint(0, SCREEN_WIDTH), "y": SCREEN_HEIGHT + 10,
+                "vx": random.uniform(-0.4, 0.4), "vy": random.uniform(-1.2, -0.5),
+                "r": random.randint(2, 5), "life": 1.0, "offset": random.uniform(0, 6)
+            })
+
+        cx = SCREEN_WIDTH // 2
+        title_y = int(SCREEN_HEIGHT * 0.15)
+        title_colors = [rainbow_color(self.anim_tick * 0.8 + i * 0.3) for i in range(7)]
+        lines = ["ROGUELIKE", "ROULETTE"]
+        for li, line in enumerate(lines):
+            size = scale(48 - li * 6)
+            col = title_colors[li * 3]
+            dark = (5, 5, 15)
+            for ox in range(4, 0, -1):
+                draw_text(surface, line, get_font(size + ox * 2, True), dark, cx + ox, title_y + li * (size + 4) + ox)
+            for glow in range(3, 0, -1):
+                g_alpha = 80 + glow * 50
+                draw_text(surface, line, get_font(size + glow * 2, True), (*col, g_alpha), cx + glow, title_y + li * (size + 4) + glow)
+            draw_text(surface, line, get_font(size, True), (255, 255, 255), cx, title_y + li * (size + 4))
+
+        y_start = int(SCREEN_HEIGHT * 0.50)
+        btn_w, btn_h = 220, 44
+        btn_x = cx - btn_w // 2
+        labels = ["NUEVA PARTIDA", "CONFIGURACION", "SALIR"]
+        actions = ["new_game", "settings", "quit"]
+        self.main_menu_buttons = {}
+        for i, (lbl, act) in enumerate(zip(labels, actions)):
+            by = y_start + i * (btn_h + 16)
+            rect = pygame.Rect(btn_x, by, btn_w, btn_h)
+            hover = rect.collidepoint(mouse_pos)
+            col = rainbow_color(self.anim_tick * 0.5 + i * 0.5) if hover else (100, 120, 200)
+            bg = (30, 35, 55) if not hover else (45, 50, 75)
+            draw_panel(surface, rect, bg, col, 10, 2 if hover else 1)
+            draw_text(surface, lbl, get_font(scale(15), True), (255, 255, 255) if hover else (241, 245, 249), rect.centerx, rect.centery)
+            self.main_menu_buttons[act] = rect
+
+        if self.settings_open:
+            self._draw_settings_menu(surface, mouse_pos)
+
+        draw_text(surface, "v1.0", get_font(9), (60, 72, 95), SCREEN_WIDTH - 20, SCREEN_HEIGHT - 16, "right")
+
+    def _draw_settings_menu(self, surface, mouse_pos):
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((8, 9, 15, 200))
+        surface.blit(overlay, (0, 0))
+        mw, mh = 360, 360
+        mx = (SCREEN_WIDTH - mw) // 2
+        my = (SCREEN_HEIGHT - mh) // 2
+        draw_panel(surface, pygame.Rect(mx, my, mw, mh), (15, 18, 30), (100, 120, 200), 16, 2)
+        draw_text(surface, "CONFIGURACION", get_font(scale(18), True), COLOR_CYAN, SCREEN_WIDTH // 2, my + 25)
+        self._settings_buttons = {}
+        sliders = [
+            ("Volumen General", "master", MASTER_VOLUME),
+            ("Volumen Efectos", "sfx", SFX_VOLUME),
+            ("Volumen Musica", "music", MUSIC_VOLUME),
+        ]
+        bar_w, bar_h = 220, 10
+        bar_x = (SCREEN_WIDTH - bar_w) // 2
+        for i, (label, key, val) in enumerate(sliders):
+            sy = my + 70 + i * 75
+            draw_text(surface, label, get_font(scale(13), True), (241, 245, 249), SCREEN_WIDTH // 2, sy)
+            bg_rect = pygame.Rect(bar_x, sy + 22, bar_w, bar_h)
+            draw_panel(surface, bg_rect, (30, 35, 55), (60, 72, 95), 6)
+            fill_w = int(bar_w * val)
+            if fill_w > 0:
+                fill_rect = pygame.Rect(bar_x, sy + 22, fill_w, bar_h)
+                draw_panel(surface, fill_rect, (52, 211, 153), (52, 211, 153), 6)
+            handle_cx = bar_x + fill_w
+            handle_cy = sy + 22 + bar_h // 2
+            pygame.draw.circle(surface, (255, 255, 255), (handle_cx, handle_cy), scale(7))
+            pygame.draw.circle(surface, (52, 211, 153), (handle_cx, handle_cy), scale(4))
+            self._settings_buttons[f"vol_{key}"] = bg_rect.inflate(scale(10), scale(10))
+            pct_lbl = f"{int(val * 100)}%"
+            draw_text(surface, pct_lbl, get_font(scale(11), True), (52, 211, 153), bar_x + bar_w + scale(18), sy + 22 + bar_h // 2)
+        back_rect = pygame.Rect(SCREEN_WIDTH // 2 - 60, my + mh - 50, 120, 36)
+        hover = back_rect.collidepoint(mouse_pos)
+        draw_panel(surface, back_rect, (30, 35, 55) if not hover else (50, 55, 75), (100, 120, 200), 8)
+        draw_text(surface, "Volver", get_font(scale(14), True), (241, 245, 249), back_rect.centerx, back_rect.centery)
+        self._settings_buttons["back"] = back_rect
 
     def _compute_layout(self):
         margin = max(14, int(SCREEN_WIDTH * 0.015))
@@ -410,7 +567,7 @@ class PygameMathRoulette:
         self.action_h = scale(50)
 
         self.dash_y = self.action_y + self.action_h + 6
-        self.dash_h = scale(118)
+        self.dash_h = scale(140)
 
         self.shelf_y = self.dash_y + self.dash_h + 6
         self.shelf_h = scale(82)
@@ -445,8 +602,9 @@ class PygameMathRoulette:
     def full_reset(self):
         self.has_pack_upgrade = False
         self.has_shop_upgrade = False
-        self.has_dual_roulette = False
+        self.dual_roulette_count = 0
         self.extra_spins_per_round = 0
+        self.duplicador_duplicated = set()
         self.relics = []
         self.game_over = False
         self.game_won = False
@@ -459,15 +617,18 @@ class PygameMathRoulette:
         self.log_color = COLOR_CYAN
 
     def init_game_data(self):
-        self.money = 6.0
-        self.displayed_money = 6.0
-        self.cash = 5.0
-        self.displayed_cash = 5.0
+        self.money = 8.0
+        self.displayed_money = 8.0
+        self.cash = 7.0
+        self.displayed_cash = 7.0
         self.round = 1
-        self.target_money = 18.0
+        self.target_money = 15.0
         self.max_spins = 5 + self.extra_spins_per_round
         self.spins_left = self.max_spins
         self.reroll_cost = 1
+        self.cash_bonus_chance = 0.25
+        self.cash_bonus_min = 1
+        self.cash_bonus_max_base = 2
         self.current_boss = NO_BOSS
         self.game_over = False
         self.game_won = False
@@ -481,10 +642,14 @@ class PygameMathRoulette:
             {"type": "add", "value": 3, "name": "+3 [CR]", "rarity": "Común"},
             {"type": "sub", "value": 1, "name": "-1 [CR]", "rarity": "Común"},
         ]
-        self.roulette_items_top = [random.choice(self.deck) for _ in range(15)]
-        self.roulette_items_dual = [random.choice(self.deck) for _ in range(15)]
+        self.roulette_items = [[random.choice(self.deck) for _ in range(15)]]
+        self.positions = [0.0]
+        self.velocities = [0.0]
+        self.last_card_triggers = [-1]
+        self.roulette_active = [False]
         self.shop_offers = []
         self.current_voucher = None
+        self.duplicador_duplicated = set()
         self.generate_shop_offers()
         self.generate_voucher_offer()
 
@@ -498,12 +663,20 @@ class PygameMathRoulette:
 
     def get_current_shop_ratios(self):
         r = self.round
-        p_rainbow = min(0.008 + (r * 0.004), 0.05)
-        p_legendario = min(0.04 + (r * 0.015), 0.15)
-        p_epico = min(0.10 + (r * 0.02), 0.25)
-        p_raro = min(0.20 + (r * 0.025), 0.35)
-        p_comun = 1.0 - (p_rainbow + p_legendario + p_epico + p_raro)
-        return {"Común": p_comun*100, "Raro": p_raro*100, "Épico": p_epico*100, "Legendario": p_legendario*100, "Rainbow": p_rainbow*100}
+        p_rainbow = min(0.0015 * (r ** 2.0), 0.045)
+        p_legendario = min(0.008 * (r ** 1.6), 0.14)
+        p_epico = min(0.04 + 0.025 * (r ** 0.85), 0.22)
+        p_raro = min(0.12 + 0.04 * (r ** 0.65), 0.34)
+        total = p_rainbow + p_legendario + p_epico + p_raro
+        if total > 0.98:
+            scale_factor = 0.98 / total
+            p_rainbow *= scale_factor; p_legendario *= scale_factor
+            p_epico *= scale_factor; p_raro *= scale_factor
+            p_comun = 0.02
+        else:
+            p_comun = 1.0 - total
+        return {"Común": p_comun*100, "Raro": p_raro*100, "Épico": p_epico*100,
+                "Legendario": p_legendario*100, "Rainbow": p_rainbow*100}
 
     def is_negative(self, item):
         if item.get("is_box") or item.get("is_relic") or item.get("is_voucher"): return False
@@ -528,7 +701,7 @@ class PygameMathRoulette:
             available.append({"id": "pack_up", **{k: VOUCHER_DEFS["pack_up"][k] for k in ("name", "price", "desc")}})
         if not self.has_shop_upgrade:
             available.append({"id": "shop_up", **{k: VOUCHER_DEFS["shop_up"][k] for k in ("name", "price", "desc")}})
-        if not self.has_dual_roulette:
+        if self.dual_roulette_count < 4:
             available.append({"id": "dual_roulette", **{k: VOUCHER_DEFS["dual_roulette"][k] for k in ("name", "price", "desc")}})
         if self.extra_spins_per_round < 3:
             available.append({"id": "extra_spin", **{k: VOUCHER_DEFS["extra_spin"][k] for k in ("name", "price", "desc")}})
@@ -658,21 +831,20 @@ class PygameMathRoulette:
             ))
 
     def trigger_reroll(self):
+        has_tarjeta = any(r["id"] == "tarjeta_clonada" for r in self.relics)
         if self.cash < self.reroll_cost:
-            self.log_text = "[ERR] CASH INSUFICIENTE PARA REROLL."
-            self.log_color = (248, 113, 113)
-            return
+            if not has_tarjeta or self.cash - self.reroll_cost < -15:
+                self.log_text = "[ERR] CASH INSUFICIENTE PARA REROLL."
+                self.log_color = (248, 113, 113)
+                return
         self.cash -= self.reroll_cost
         self.reroll_cost = min(99, self.reroll_cost * 2)
         self.buttons[self.btn_reroll_idx].text = f"Reroll: {self.reroll_cost} $"
         self.generate_shop_offers()
 
     def check_funds_and_spins_integrity(self):
-        has_tarjeta = any(r["id"] == "tarjeta_clonada" for r in self.relics)
-        floor_limit = -15.0 if has_tarjeta else 0.0
-
-        if self.money < floor_limit:
-            self.trigger_game_over(f"BANCARROTA CRITICA: Saldo CR inferior a {floor_limit}.")
+        if self.money < 0:
+            self.trigger_game_over(f"BANCARROTA CRITICA: Saldo CR inferior a 0.")
             return True
         if self.spins_left <= 0 and self.money < self.target_money:
             self.trigger_game_over(f"DERROTA: Sin giros para alcanzar {format_num(self.target_money)}.")
@@ -681,10 +853,12 @@ class PygameMathRoulette:
 
     def trigger_game_over(self, reason_text):
         self.game_over = True
-        self.velocity = 0; self.velocity_dual = 0; self.is_spinning = False
+        for i in range(len(self.velocities)):
+            self.velocities[i] = 0
+        self.is_spinning = False
         self.log_text = reason_text
         self.log_color = (248, 113, 113)
-        SOUND_FAIL.play()
+        play_sound(SOUND_FAIL)
 
     def advance_round_clean(self):
         if self.money < self.target_money:
@@ -701,7 +875,7 @@ class PygameMathRoulette:
         if self.current_boss["id"] != "no_interest":
             if self.money > self.target_money:
                 excess = self.money - self.target_money
-                cash_interest = max(1, int(excess * 0.20))
+                cash_interest = max(1, min(int(excess * 0.20), 5 + self.round * 2))
                 self.cash += cash_interest
                 cash_log += f" Interes CR: +{cash_interest} $."
             cr_interest = min(8, int(self.money // 4))
@@ -717,11 +891,11 @@ class PygameMathRoulette:
             self.game_won = True
             self.log_text = f"VICTORIA RONDA {VICTORY_ROUND}! Presiona [N] para seguir en MODO INFINITO."
             self.log_color = (52, 211, 153)
-            SOUND_WIN.play()
+            play_sound(SOUND_WIN)
             return
 
         self.round += 1
-        self.target_money = float(self.round * 16 + random.randint(3, 8))
+        self.target_money = float(self.round ** 2.2 * 1.5 + 15 + random.randint(2, 5))
         self.current_boss = random.choice(BOSS_BLINDS) if self.round > 1 else NO_BOSS
         self.max_spins = 5 + self.extra_spins_per_round
         self.spins_left = self.max_spins - 1 if self.current_boss["id"] == "minus_spin" else self.max_spins
@@ -736,37 +910,44 @@ class PygameMathRoulette:
     def trigger_victory(self):
         self.game_won = True
         self.is_spinning = False
-        self.velocity = 0
-        self.velocity_dual = 0
+        for i in range(len(self.velocities)):
+            self.velocities[i] = 0
         self.log_text = "VICTORIA TOTAL: Has dominado la Ruleta Zombi."
         self.log_color = (52, 211, 153)
-        SOUND_WIN.play()
+        play_sound(SOUND_WIN)
 
     def start_spin(self):
         if self.game_over or self.spins_left <= 0 or self.is_spinning or self.overlay_open: return
-        self.is_spinning = True; self.roulette_1_active = True
-        self.roulette_items_top = [random.choice(self.deck).copy() for _ in range(65)]
-        self.position = 0.0; self.velocity = random.uniform(75.0, 95.0)
-        self.last_card_trigger = -1
+        count = 1 + self.dual_roulette_count
+        self.is_spinning = True
+        self.roulette_active = [False] * count
+        self.roulette_active[0] = True
+        self.roulette_items = [[random.choice(self.deck).copy() for _ in range(65)]]
+        self.positions = [0.0]
+        self.velocities = [random.uniform(75.0, 95.0)]
+        self.last_card_triggers = [-1]
         
-        for card in self.roulette_items_top:
-            if random.random() < 0.22:
-                cash_val = random.randint(1, 2 + self.round // 3)
+        for card in self.roulette_items[0]:
+            if random.random() < self.cash_bonus_chance:
+                cash_val = random.randint(self.cash_bonus_min, self.cash_bonus_max_base + self.round // 3)
                 card["cash_bonus"] = cash_val
         
-        if self.has_dual_roulette:
-            self.roulette_2_active = True
-            self.roulette_items_dual = [random.choice(self.deck).copy() for _ in range(65)]
-            self.position_dual = 0.0; self.velocity_dual = random.uniform(70.0, 90.0)
-            self.last_card_trigger_dual = -1
-            
-            for card in self.roulette_items_dual:
-                if random.random() < 0.22:
-                    cash_val = random.randint(1, 2 + self.round // 3)
+        for extra in range(1, count):
+            self.roulette_active[extra] = True
+            self.roulette_items.append([random.choice(self.deck).copy() for _ in range(65)])
+            self.positions.append(0.0)
+            self.velocities.append(random.uniform(70.0, 90.0))
+            self.last_card_triggers.append(-1)
+            for card in self.roulette_items[extra]:
+                if random.random() < self.cash_bonus_chance:
+                    cash_val = random.randint(self.cash_bonus_min, self.cash_bonus_max_base + self.round // 3)
                     card["cash_bonus"] = cash_val
-        else: self.roulette_2_active = False
 
     def update_physics(self, dt):
+        self._update_music_volume()
+        if self.game_state == "menu":
+            return
+
         self.anim_tick += dt * 0.05
         for star in self.stars:
             star["y"] += star["spd"] * dt
@@ -813,32 +994,24 @@ class PygameMathRoulette:
             return
 
         current_friction = self.friction
+        any_active = False
 
-        if self.roulette_1_active:
-            if self.velocity > self.min_velocity:
-                self.position += self.velocity * dt
-                self.velocity *= math.pow(current_friction, dt)
-                idx = int((self.position + (self.card_step / 2)) // self.card_step)
-                if idx != self.last_card_trigger:
-                    play_dynamic_click(self.velocity, self.has_dual_roulette)
-                    self.last_card_trigger = idx
-            else:
-                self.velocity = 0
-                self.roulette_1_active = False
+        for i in range(len(self.roulette_active)):
+            if self.roulette_active[i]:
+                if self.velocities[i] > self.min_velocity:
+                    self.positions[i] += self.velocities[i] * dt
+                    self.velocities[i] *= math.pow(current_friction, dt)
+                    idx = int((self.positions[i] + (self.card_step / 2)) // self.card_step)
+                    if idx != self.last_card_triggers[i]:
+                        play_dynamic_click(self.velocities[i], len(self.roulette_active) > 1)
+                        self.last_card_triggers[i] = idx
+                else:
+                    self.velocities[i] = 0
+                    self.roulette_active[i] = False
+            if self.roulette_active[i]:
+                any_active = True
 
-        if self.roulette_2_active and self.has_dual_roulette:
-            if self.velocity_dual > self.min_velocity:
-                self.position_dual += self.velocity_dual * dt
-                self.velocity_dual *= math.pow(current_friction, dt)
-                idx = int((self.position_dual + (self.card_step / 2)) // self.card_step)
-                if idx != self.last_card_trigger_dual:
-                    play_dynamic_click(self.velocity_dual, True)
-                    self.last_card_trigger_dual = idx
-            else:
-                self.velocity_dual = 0
-                self.roulette_2_active = False
-
-        if not self.roulette_1_active and not (self.roulette_2_active and self.has_dual_roulette):
+        if not any_active:
             self.is_spinning = False
             self.determine_winners_execution()
 
@@ -856,63 +1029,69 @@ class PygameMathRoulette:
         elif m_type == "sub": self.money -= val
         elif m_type == "mult": self.money *= val
         elif m_type == "div": self.money = self.money / val if self.money > 0 else 0
-        elif m_type == "pow": self.money = min(self.money ** val, 1e12) if self.money > 1 else self.money + 3
+        elif m_type == "pow": self.money = min(self.money ** val, 1e100) if self.money > 1 else self.money + 3
         elif m_type == "zero": self.money = 0.0
         cash_bonus = item.get("cash_bonus", 0)
         if cash_bonus:
             self.cash += cash_bonus
 
     def determine_winners_execution(self):
-        SOUND_WIN.play()
+        play_sound(SOUND_WIN)
         self.last_winners = []
-        
-        w1_idx = max(0, min(int((self.position + (self.card_step / 2)) // self.card_step), len(self.roulette_items_top) - 1))
-        winner1 = self.roulette_items_top[w1_idx]
         old_money = self.money
         old_cash = self.cash
-        self.resolve_item_effect(winner1)
-        self.last_winners.append(w1_idx)
-        
+        log_build = ""
         has_segunda = any(r["id"] == "segunda_oportunidad" for r in self.relics)
-        if has_segunda and self.is_negative(winner1) and random.random() < 0.10:
-            self.money = old_money
-            self.cash = old_cash
-            if self.has_dual_roulette:
-                old_dual = self.money
-                old_cash_dual = self.cash
-                w2_temp = max(0, min(int((self.position_dual + (self.card_step / 2)) // self.card_step), len(self.roulette_items_dual) - 1))
-                self.resolve_item_effect(self.roulette_items_dual[w2_temp])
-                self.money = old_dual
-                self.cash = old_cash_dual
-            self.log_text = "¡SEGUNDA OPORTUNIDAD! Casilla negativa evadida. Gira de nuevo."
-            self.log_color = (52, 211, 153)
-            y_emit = self.canvas_y + 50 if self.has_dual_roulette else self.canvas_y + self.canvas_height // 2
-            self.create_impact_particles(self.canvas_x + self.canvas_width // 2, y_emit, (52, 211, 153), count=50)
-            return
+        has_mejora = any(r["id"] == "mejora_progresiva" for r in self.relics)
+        upgrade_data = []
+        rolled_back = False
         
-        c1 = (248, 113, 113) if self.is_negative(winner1) else RARITIES.get(winner1["rarity"], {"color": (52, 211, 153)})["color"]
-        y_emit_1 = self.canvas_y + 50 if self.has_dual_roulette else self.canvas_y + self.canvas_height // 2
-        self.create_impact_particles(self.canvas_x + self.canvas_width // 2, y_emit_1, c1, count=40)
-        
-        log_build = f"[R1]: {winner1['name']}"
-        if self.has_dual_roulette:
-            w2_idx = max(0, min(int((self.position_dual + (self.card_step / 2)) // self.card_step), len(self.roulette_items_dual) - 1))
-            winner2 = self.roulette_items_dual[w2_idx]
-            old2 = self.money
-            old_cash2 = self.cash
-            self.resolve_item_effect(winner2)
-            if has_segunda and self.is_negative(winner2) and random.random() < 0.10:
+        for ri in range(len(self.roulette_items)):
+            idx = max(0, min(int((self.positions[ri] + (self.card_step / 2)) // self.card_step), len(self.roulette_items[ri]) - 1))
+            winner = self.roulette_items[ri][idx]
+            
+            if ri == 0:
+                self.resolve_item_effect(winner)
+            else:
+                self.resolve_item_effect(winner)
+            
+            if has_segunda and self.is_negative(winner) and random.random() < 0.10:
                 self.money = old_money
                 self.cash = old_cash
                 self.log_text = "¡SEGUNDA OPORTUNIDAD! Casilla negativa evadida. Gira de nuevo."
                 self.log_color = (52, 211, 153)
-                self.create_impact_particles(self.canvas_x + self.canvas_width // 2, self.canvas_y + self.canvas_height - 50, (52, 211, 153), count=50)
-                return
-            self.last_winners.append(w2_idx)
-            c2 = (248, 113, 113) if self.is_negative(winner2) else RARITIES.get(winner2["rarity"], {"color": (34, 211, 238)})["color"]
-            self.create_impact_particles(self.canvas_x + self.canvas_width // 2, self.canvas_y + self.canvas_height - 50, c2, count=40)
-            log_build += f" | [R2]: {winner2['name']}"
+                y_emit = self.canvas_y + 50 if len(self.roulette_items) > 1 else self.canvas_y + self.canvas_height // 2
+                self.create_impact_particles(self.canvas_x + self.canvas_width // 2, y_emit, (52, 211, 153), count=50)
+                rolled_back = True
+                break
             
+            self.last_winners.append(idx)
+            c = (248, 113, 113) if self.is_negative(winner) else RARITIES.get(winner["rarity"], {"color": (52, 211, 153)})["color"]
+            y_pos = self.canvas_y + 50 if len(self.roulette_items) > 1 else self.canvas_y + self.canvas_height // 2
+            self.create_impact_particles(self.canvas_x + self.canvas_width // 2, y_pos, c, count=40)
+            
+            if log_build:
+                log_build += f" | [R{ri+1}]: {winner['name']}"
+            else:
+                log_build = f"[R1]: {winner['name']}"
+            
+            if has_mejora and winner["type"] == "add" and winner["rarity"] in ("Común", "Raro") and winner["name"] in self.UPGRADE_MAP:
+                upgraded = self.UPGRADE_MAP[winner["name"]]
+                for di, d_item in enumerate(self.deck):
+                    if d_item["name"] == winner["name"]:
+                        self.deck[di] = upgraded.copy()
+                        break
+                upgrade_color = RARITIES.get(upgraded["rarity"], {"color": (52, 211, 153)})["color"]
+                self.shake_intensity = 12
+                self.shake_timer = 15
+                self.create_impact_particles(self.canvas_x + self.canvas_width // 2, self.canvas_y + self.canvas_height // 2, upgrade_color, count=60)
+                self.create_impact_particles(self.canvas_x + self.canvas_width // 2, self.canvas_y + self.canvas_height // 2, (255, 255, 200), count=30)
+                self.roulette_items[ri][idx] = upgraded.copy()
+                upgrade_data.append({"idx": idx, "old_name": winner["name"], "new_name": upgraded["name"], "new_item": upgraded.copy()})
+        
+        if rolled_back:
+            return
+        
         delta_cr = self.money - old_money
         delta_cash = self.cash - old_cash
         log_parts = [log_build]
@@ -927,27 +1106,6 @@ class PygameMathRoulette:
         self.shake_intensity = 8
         self.shake_timer = 10
         
-        has_mejora = any(r["id"] == "mejora_progresiva" for r in self.relics)
-        upgrade_data = []
-        for ii, w_item in enumerate([(w1_idx, winner1)] + ([(w2_idx, winner2)] if self.has_dual_roulette else [])):
-            w_idx, w_item_data = w_item
-            if has_mejora and w_item_data["type"] == "add" and w_item_data["rarity"] in ("Común", "Raro") and w_item_data["name"] in self.UPGRADE_MAP:
-                upgraded = self.UPGRADE_MAP[w_item_data["name"]]
-                for i, d_item in enumerate(self.deck):
-                    if d_item["name"] == w_item_data["name"]:
-                        self.deck[i] = upgraded.copy()
-                        break
-                upgrade_color = RARITIES.get(upgraded["rarity"], {"color": (52, 211, 153)})["color"]
-                self.shake_intensity = 12
-                self.shake_timer = 15
-                self.create_impact_particles(self.canvas_x + self.canvas_width // 2, self.canvas_y + self.canvas_height // 2, upgrade_color, count=60)
-                self.create_impact_particles(self.canvas_x + self.canvas_width // 2, self.canvas_y + self.canvas_height // 2, (255, 255, 200), count=30)
-                # Replace the card in the roulette track immediately so it shows the new value
-                if ii == 0:
-                    self.roulette_items_top[w_idx] = upgraded.copy()
-                elif ii == 1 and self.has_dual_roulette:
-                    self.roulette_items_dual[w_idx] = upgraded.copy()
-                upgrade_data.append({"idx": w_idx, "old_name": w_item_data["name"], "new_name": upgraded["name"], "new_item": upgraded.copy()})
         if upgrade_data:
             self.upgrade_anim = {"data": upgrade_data, "timer": 2.5}
         
@@ -959,11 +1117,14 @@ class PygameMathRoulette:
         item = self.shop_offers[idx]
         if item is None: return
         if item.get("is_box") or item.get("is_relic") or not self.is_negative(item):
-            if self.cash < item["price"]:
-                self.log_text = "[ERR] CASH INSUFICIENTE."
-                self.log_color = (248, 113, 113)
-                return
-            self.cash -= item["price"]
+            has_tarjeta = any(r["id"] == "tarjeta_clonada" for r in self.relics)
+            price = item["price"]
+            if self.cash < price:
+                if not has_tarjeta or self.cash - price < -15:
+                    self.log_text = "[ERR] CASH INSUFICIENTE."
+                    self.log_color = (248, 113, 113)
+                    return
+            self.cash -= price
         else:
             # Negative items pay you cash to take them
             self.cash += item["price"]
@@ -994,15 +1155,18 @@ class PygameMathRoulette:
 
     def buy_voucher(self):
         if self.game_over or not self.current_voucher or self.overlay_open or self.is_spinning: return
-        if self.cash < self.current_voucher["price"]:
-            return
+        has_tarjeta = any(r["id"] == "tarjeta_clonada" for r in self.relics)
+        price = self.current_voucher["price"]
+        if self.cash < price:
+            if not has_tarjeta or self.cash - price < -15:
+                return
         
         self.cash -= self.current_voucher["price"]
         v_id = self.current_voucher["id"]
         
         if v_id == "pack_up": self.has_pack_upgrade = True
         elif v_id == "shop_up": self.has_shop_upgrade = True; self.generate_shop_offers()
-        elif v_id == "dual_roulette": self.has_dual_roulette = True
+        elif v_id == "dual_roulette": self.dual_roulette_count += 1
         elif v_id == "extra_spin": self.extra_spins_per_round += 1; self.max_spins += 1; self.spins_left += 1
             
         self.current_voucher = None
@@ -1018,7 +1182,23 @@ class PygameMathRoulette:
         
         active_relic_ids = [r["id"] for r in self.relics]
         available_relics = [rk for rk in self.RELICS_POOL.keys() if rk not in active_relic_ids]
+        has_duplicador = "duplicador_cuantico" in active_relic_ids
         available_vouchers = self.get_available_vouchers()
+        # With Duplicador Cuantico, allow ONE extra copy per voucher type in boosters
+        if has_duplicador:
+            extra_vouchers = []
+            for vid in VOUCHER_DEFS:
+                if vid in self.duplicador_duplicated:
+                    continue
+                vdef = VOUCHER_DEFS[vid]
+                current = (self.dual_roulette_count if vid == "dual_roulette"
+                           else self.extra_spins_per_round if vid == "extra_spin"
+                           else (1 if self.has_pack_upgrade else 0) if vid == "pack_up"
+                            else (1 if self.has_shop_upgrade else 0))
+                max_allowed = (4 if vid == "dual_roulette" else (3 if vid == "extra_spin" else 2))
+                if current >= 1 and current < max_allowed:
+                    extra_vouchers.append({"id": vid, **{k: vdef[k] for k in ("name", "price", "desc")}})
+            available_vouchers = available_vouchers + extra_vouchers
         
         while len(self.booster_options) < cards_count:
             roll = random.random()
@@ -1072,9 +1252,22 @@ class PygameMathRoulette:
                 self.relics.append({"id": item["id"], "name": item["name"], "desc": item["desc"], "rarity": item["rarity"]})
         elif item.get("is_voucher"):
             v_id = item["id"]
+            # Track Duplicador Cuantico duplicates
+            if any(r["id"] == "duplicador_cuantico" for r in self.relics):
+                if v_id not in self.duplicador_duplicated:
+                    # Check if we already own this voucher (i.e. it's a duplicate)
+                    already_owned = (
+                        (v_id == "pack_up" and self.has_pack_upgrade) or
+                        (v_id == "shop_up" and self.has_shop_upgrade) or
+                        (v_id == "dual_roulette" and self.dual_roulette_count > 0) or
+                        (v_id == "extra_spin" and self.extra_spins_per_round > 0)
+                    )
+                    already_in_shop = any(v["id"] == v_id for v in self.get_available_vouchers())
+                    if already_owned or not already_in_shop:
+                        self.duplicador_duplicated.add(v_id)
             if v_id == "pack_up": self.has_pack_upgrade = True
             elif v_id == "shop_up": self.has_shop_upgrade = True; self.generate_shop_offers()
-            elif v_id == "dual_roulette": self.has_dual_roulette = True
+            elif v_id == "dual_roulette": self.dual_roulette_count += 1
             elif v_id == "extra_spin": self.extra_spins_per_round += 1; self.max_spins += 1; self.spins_left += 1
         else:
             self.deck.append(item)
@@ -1123,11 +1316,11 @@ class PygameMathRoulette:
             pulse = int(8 * math.sin(self.anim_tick * 12))
             glow = card_rect.inflate(16 + pulse, 16 + pulse)
             pygame.draw.rect(surface, (52, 211, 153), glow, width=3, border_radius=14)
-            font_size = scale(14 if not self.has_dual_roulette else 13)
+            font_size = scale(14 if len(self.roulette_items) <= 1 else 13)
             draw_text(surface, text_str, get_font(font_size, True), text_color, card_rect.centerx, card_rect.centery)
             cb = item.get("cash_bonus", 0)
             if cb and not is_blinded:
-                draw_text(surface, f"+{cb}$", get_font(scale(9), True), (74, 222, 128), card_rect.centerx, card_rect.bottom - scale(8))
+                draw_text(surface, f"+{cb}$", get_font(scale(9), True), (74, 222, 128), card_rect.centerx, card_rect.top + scale(8))
             lbl = "★ MEJORADA ★" if t > 0.8 else "MEJORADA"
             lw = get_font(scale(11), True).size(lbl)[0]
             lbl_bg = pygame.Rect(0, 0, lw + 12, scale(18))
@@ -1142,12 +1335,12 @@ class PygameMathRoulette:
         if is_winner:
             glow_rect = card_rect.inflate(6, 6)
             pygame.draw.rect(surface, COLOR_GOLD, glow_rect, width=2, border_radius=12)
-        font_size = scale(14 if not self.has_dual_roulette else 13)
+        font_size = scale(14 if len(self.roulette_items) <= 1 else 13)
         draw_text(surface, text_str, get_font(font_size, True), text_color, card_rect.centerx, card_rect.centery)
         cash_bonus = item.get("cash_bonus", 0)
         if cash_bonus and not is_blinded:
             bonus_label = f"+{cash_bonus}$"
-            draw_text(surface, bonus_label, get_font(scale(9), True), (74, 222, 128), card_rect.centerx, card_rect.bottom - scale(8))
+            draw_text(surface, bonus_label, get_font(scale(9), True), (74, 222, 128), card_rect.centerx, card_rect.top + scale(8))
 
     def _draw_roulette_track(self, surface, items, y_pos, position, winner_idx=-1):
         center_offset = self.canvas_x + (self.canvas_width / 2) - (self.card_width / 2)
@@ -1169,8 +1362,11 @@ class PygameMathRoulette:
             font_title = get_font(scale(13), True)
             font_desc = get_font(scale(12))
 
-            tw = max(font_title.size(name)[0], font_desc.size(desc)[0]) + 24
-            th = 58
+            lines = desc.split("\n")
+            line_h = scale(16)
+            max_line_w = max(font_title.size(name)[0], max(font_desc.size(l)[0] for l in lines))
+            tw = max_line_w + 24
+            th = 28 + len(lines) * line_h
             tx = m_pos[0] + 15
             ty = m_pos[1] - 15
 
@@ -1183,10 +1379,15 @@ class PygameMathRoulette:
             draw_panel(surface, tt_rect, (12, 15, 26), BORDER_BLUE, 8)
 
             draw_text(surface, name, font_title, COLOR_GOLD, tx + 12, ty + 14, "left")
-            draw_text(surface, desc, font_desc, (226, 232, 240), tx + 12, ty + 36, "left")
+            for li, line in enumerate(lines):
+                draw_text(surface, line, font_desc, (226, 232, 240), tx + 12, ty + 36 + li * line_h, "left")
         self.tooltip_queue.clear()
 
     def draw(self, surface):
+        if self.game_state == "menu":
+            self._draw_main_menu(surface)
+            return
+
         current_canvas_x = self.canvas_x
         current_canvas_y = self.canvas_y
         if self.shake_timer > 0:
@@ -1229,26 +1430,68 @@ class PygameMathRoulette:
         draw_text(surface, f"GIROS: {max(0, self.spins_left)}/{self.max_spins}", get_font(scale(13), True), (241, 245, 249), col4, mid_y - 14, "left")
         draw_progress_bar(surface, col4, mid_y + 2, int(SCREEN_WIDTH * 0.10), scale(12), spin_prog, COLOR_CYAN)
 
+        # Voucher inventory HUD (computed before boss to prevent overlap)
+        owned_vouchers = []
+        if self.has_pack_upgrade:
+            owned_vouchers.append(("pack_up", VOUCHER_DEFS["pack_up"]["name"]))
+        if self.has_shop_upgrade:
+            owned_vouchers.append(("shop_up", VOUCHER_DEFS["shop_up"]["name"]))
+        if self.dual_roulette_count > 0:
+            owned_vouchers.append(("dual_roulette", VOUCHER_DEFS["dual_roulette"]["name"]))
+        if self.extra_spins_per_round > 0:
+            owned_vouchers.append(("extra_spin", VOUCHER_DEFS["extra_spin"]["name"]))
+        voucher_area_rect = None
+        if owned_vouchers:
+            count_map = {}
+            name_map = {}
+            for vid, vname in owned_vouchers:
+                if vid == "dual_roulette":
+                    count_map[vid] = self.dual_roulette_count
+                elif vid == "extra_spin":
+                    count_map[vid] = self.extra_spins_per_round
+                else:
+                    count_map[vid] = 1
+                name_map[vid] = vname
+            icon_size = scale(28)
+            gap = scale(6)
+            total_w = len(count_map) * icon_size + (len(count_map) - 1) * gap
+            start_x = SCREEN_WIDTH - self.margin - total_w - scale(8)
+            icon_y = self.header_y + (self.header_h - icon_size) // 2
+            voucher_area_rect = pygame.Rect(start_x - scale(4), icon_y - scale(2), total_w + scale(8), icon_size + scale(4))
+            for vi, vid in enumerate(count_map):
+                cx = start_x + vi * (icon_size + gap) + icon_size // 2
+                draw_voucher_icon(surface, vid, cx, icon_y + icon_size // 2, icon_size, self.anim_tick)
+                c = count_map[vid]
+                if c > 1:
+                    lbl = f"x{c}"
+                    lw = get_font(scale(10), True).size(lbl)[0]
+                    lbl_x = cx + icon_size // 2 - lw // 2 + scale(2)
+                    lbl_y = icon_y - scale(2)
+                    pygame.draw.rect(surface, (15, 23, 42), (lbl_x - scale(2), lbl_y, lw + scale(4), scale(14)), border_radius=3)
+                    draw_text(surface, lbl, get_font(scale(10), True), COLOR_GOLD, cx + icon_size // 2 + scale(2), lbl_y + scale(7))
+            if voucher_area_rect.collidepoint(mouse_pos) and not self.overlay_open:
+                tooltip_lines = [f"{name_map[vid]} x{count_map[vid]}" for vid in count_map]
+                self.queue_tooltip("VALES ADQUIRIDOS", "\n".join(tooltip_lines), mouse_pos)
+
         if self.current_boss["id"] != "none":
             draw_text(surface, f"[!] {self.current_boss['name']}", get_font(scale(12), True), (244, 63, 94), col5, mid_y - 6, "left")
             boss_rect = pygame.Rect(col5 - 5, self.header_y + 8, SCREEN_WIDTH - col5 - self.margin, self.header_h - 16)
-            if boss_rect.collidepoint(mouse_pos):
+            if boss_rect.collidepoint(mouse_pos) and (voucher_area_rect is None or not voucher_area_rect.collidepoint(mouse_pos)):
                 self.queue_tooltip(self.current_boss["name"], self.current_boss["desc"], mouse_pos)
 
         canvas_rect = pygame.Rect(current_canvas_x, current_canvas_y, self.canvas_width, self.canvas_height)
         draw_panel(surface, canvas_rect, BG_CANVAS, BORDER_BLUE, 16)
 
         surface.set_clip(canvas_rect)
-        w1 = self.last_winners[0] if len(self.last_winners) > 0 else -1
-        w2 = self.last_winners[1] if len(self.last_winners) > 1 else -1
-        if not self.has_dual_roulette:
-            y_top = current_canvas_y + (self.canvas_height - self.card_height) // 2
-            self._draw_roulette_track(surface, self.roulette_items_top, y_top, self.position, w1)
-        else:
-            y_top_1 = current_canvas_y + 10
-            y_top_2 = current_canvas_y + self.canvas_height - self.card_height - 10
-            self._draw_roulette_track(surface, self.roulette_items_top, y_top_1, self.position, w1)
-            self._draw_roulette_track(surface, self.roulette_items_dual, y_top_2, self.position_dual, w2)
+        n_tracks = len(self.roulette_items)
+        gap = max(4, scale(6))
+        total_gap = gap * (n_tracks - 1)
+        track_h = (self.canvas_height - total_gap) // n_tracks
+        card_h_actual = min(self.card_height, track_h - scale(4))
+        for ri in range(n_tracks):
+            y_center = current_canvas_y + ri * (track_h + gap) + (track_h - card_h_actual) // 2
+            w_idx = self.last_winners[ri] if ri < len(self.last_winners) else -1
+            self._draw_roulette_track(surface, self.roulette_items[ri], y_center, self.positions[ri], w_idx)
 
         mid_x = current_canvas_x + self.canvas_width // 2
         pulse = int(3 * math.sin(self.anim_tick * 4))
@@ -1270,12 +1513,60 @@ class PygameMathRoulette:
         real_deck_count = len(self.deck)
         draw_text(surface, f"MAZO [{real_deck_count}]", get_font(scale(14), True), COLOR_CYAN, deck_rect.x + 14, dash_y + 18, "left")
 
-        probs = self.calculate_probabilities()
-        sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)[:6]
-        for i, (name, prob) in enumerate(sorted_probs):
-            line_y = dash_y + 40 + i * scale(14)
-            if line_y < dash_y + self.dash_h - 8:
-                draw_text(surface, f"{name}: {prob:.0f}%", get_font(scale(12)), COLOR_TEXT_MUTED, deck_rect.x + 14, line_y, "left")
+        total_cards = len(self.deck)
+        if total_cards > 0:
+            effect_counts = {}
+            for item in self.deck:
+                key = (item["type"], item["value"])
+                effect_counts[key] = effect_counts.get(key, 0) + 1
+            def sort_key(kv):
+                t, v = kv[0]
+                order = {"add": 0, "sub": 1, "mult": 2, "div": 3, "pow": 4, "zero": 5}.get(t, 9)
+                return (order, -v if t == "add" else v)
+            sorted_effects = sorted(effect_counts.items(), key=sort_key)
+            max_visible = (self.dash_h - 62) // scale(14)
+            hidden_count = max(0, len(sorted_effects) - max_visible)
+            for i, ((t, v), count) in enumerate(sorted_effects):
+                if i >= max_visible:
+                    break
+                if t == "add": label = f"+{int(v)} CR"
+                elif t == "sub": label = f"-{int(v)} CR"
+                elif t == "mult": label = f"x{v} CR"
+                elif t == "div": label = f"/{v} CR"
+                elif t == "pow": label = f"^{v} CR"
+                elif t == "zero": label = "=0 CR"
+                else: label = f"{t} {v}"
+                pct = count / total_cards * 100
+                line_y = dash_y + 38 + i * scale(14)
+                is_neg = t in ("sub", "div", "zero")
+                color = (248, 113, 113) if is_neg else COLOR_TEXT_MUTED
+                draw_text(surface, f"{label}: {pct:.0f}%", get_font(scale(12)), color, deck_rect.x + 14, line_y, "left")
+            if hidden_count > 0:
+                more_y = dash_y + 38 + max_visible * scale(14)
+                draw_text(surface, f"... +{hidden_count} mas", get_font(scale(11)), COLOR_TEXT_MUTED, deck_rect.x + 14, more_y, "left")
+            shown = max_visible if hidden_count > 0 else len(sorted_effects)
+            cash_y = dash_y + 38 + (shown + (1 if hidden_count > 0 else 0)) * scale(14) + scale(4)
+        else:
+            cash_y = dash_y + 38
+        cash_max = self.cash_bonus_max_base + self.round // 3
+        draw_text(surface, "$ Cash por casilla:", get_font(scale(12)), (74, 222, 128), deck_rect.x + 14, cash_y, "left")
+        draw_text(surface, f"{self.cash_bonus_chance*100:.0f}% (+{self.cash_bonus_min}-{cash_max}$)", get_font(scale(12)), COLOR_TEXT_MUTED, deck_rect.x + 14, cash_y + scale(14), "left")
+
+        if deck_rect.collidepoint(mouse_pos) and total_cards > 0:
+            lines = []
+            for (t, v), count in sorted_effects:
+                if t == "add": lbl = f"+{int(v)} CR"
+                elif t == "sub": lbl = f"-{int(v)} CR"
+                elif t == "mult": lbl = f"x{v} CR"
+                elif t == "div": lbl = f"/{v} CR"
+                elif t == "pow": lbl = f"^{v} CR"
+                elif t == "zero": lbl = "=0 CR"
+                else: lbl = f"{t} {v}"
+                pct = count / total_cards * 100
+                lines.append(f"{lbl}: {pct:.0f}%")
+            lines.append(f"---")
+            lines.append(f"$ Cash: {self.cash_bonus_chance*100:.0f}% (+{self.cash_bonus_min}-{cash_max}$)")
+            self.queue_tooltip("MAZO - Todas las probabilidades", "\n".join(lines), mouse_pos)
 
         log_rect = pygame.Rect(self.log_x, dash_y, self.log_w, self.dash_h)
         draw_panel(surface, log_rect, (15, 18, 28))
@@ -1310,7 +1601,8 @@ class PygameMathRoulette:
                     draw_panel(surface, slot_rect, (80, 20, 20), (239, 68, 68), 10, 2)
                     draw_text(surface, "PURGAR PASIVO", get_font(scale(14), True), (255, 100, 100), slot_rect.centerx, shelf_y + 28)
                     draw_text(surface, f"+{max(1, self.RELICS_POOL[relic_data['id']]['price'] // 2)} $", get_font(scale(13), True), (255, 255, 255), slot_rect.centerx, shelf_y + 52)
-                    self.queue_tooltip(relic_data["name"], relic_data["desc"], mouse_pos)
+                    if not self.overlay_open:
+                        self.queue_tooltip(relic_data["name"], relic_data["desc"], mouse_pos)
                 else:
                     draw_panel(surface, slot_rect, r_style["bg"], r_style["color"], 10)
                     draw_text(surface, relic_data["name"], get_font(scale(14), True), (255, 255, 255), slot_rect.centerx, shelf_y + 24)
@@ -1382,7 +1674,7 @@ class PygameMathRoulette:
             elif item.get("is_relic"):
                 draw_text(surface, item["name"], get_font(scale(15), True), COLOR_GOLD, box_rect.centerx, text_y)
                 draw_text(surface, "Pasivo / Reliquia", get_font(scale(12)), (234, 140, 8), box_rect.centerx, text_y + scale(26))
-                if box_rect.collidepoint(mouse_pos):
+                if box_rect.collidepoint(mouse_pos) and not self.overlay_open:
                     self.queue_tooltip(item["name"], item["desc"], mouse_pos)
             else:
                 item_color = (248, 113, 113) if is_neg else RARITIES[item["rarity"]]["color"]
@@ -1422,7 +1714,7 @@ class PygameMathRoulette:
         if self.current_voucher:
             hovered = v_rect.collidepoint(mouse_pos)
             draw_voucher_card(surface, v_rect, self.current_voucher, self.anim_tick, hovered)
-            if hovered:
+            if hovered and not self.overlay_open:
                 self.queue_tooltip(self.current_voucher["name"], self.current_voucher["desc"], mouse_pos)
         else:
             draw_panel(surface, v_rect, (14, 16, 22), (25, 32, 45), 12)
@@ -1557,29 +1849,185 @@ class PygameMathRoulette:
         draw_text(surface, "[ESC] Salir", get_font(8), (60, 72, 95), SCREEN_WIDTH - self.margin - 10, SCREEN_HEIGHT - 12, "right")
         self.draw_queued_tooltips(surface)
 
+        if self.menu_open:
+            self._draw_menu(surface, mouse_pos)
+
+    def _draw_menu(self, surface, mouse_pos):
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((8, 9, 15, 220))
+        surface.blit(overlay, (0, 0))
+        mw, mh = 340, 300
+        mx = (SCREEN_WIDTH - mw) // 2
+        my = (SCREEN_HEIGHT - mh) // 2
+        draw_panel(surface, pygame.Rect(mx, my, mw, mh), (15, 18, 30), (100, 120, 200), 16, 2)
+
+        if self.settings_open:
+            mw, mh = 360, 360
+            mx = (SCREEN_WIDTH - mw) // 2
+            my = (SCREEN_HEIGHT - mh) // 2
+            draw_panel(surface, pygame.Rect(mx, my, mw, mh), (15, 18, 30), (100, 120, 200), 16, 2)
+            draw_text(surface, "CONFIGURACION", get_font(scale(18), True), COLOR_CYAN, SCREEN_WIDTH // 2, my + 25)
+            self._menu_buttons = {}
+            sliders = [
+                ("Volumen General", "master", MASTER_VOLUME),
+                ("Volumen Efectos", "sfx", SFX_VOLUME),
+                ("Volumen Musica", "music", MUSIC_VOLUME),
+            ]
+            bar_w, bar_h = 220, 10
+            bar_x = (SCREEN_WIDTH - bar_w) // 2
+            for i, (label, key, val) in enumerate(sliders):
+                sy = my + 70 + i * 75
+                draw_text(surface, label, get_font(scale(13), True), (241, 245, 249), SCREEN_WIDTH // 2, sy)
+                bg_rect = pygame.Rect(bar_x, sy + 22, bar_w, bar_h)
+                draw_panel(surface, bg_rect, (30, 35, 55), (60, 72, 95), 6)
+                fill_w = int(bar_w * val)
+                if fill_w > 0:
+                    fill_rect = pygame.Rect(bar_x, sy + 22, fill_w, bar_h)
+                    draw_panel(surface, fill_rect, (52, 211, 153), (52, 211, 153), 6)
+                handle_cx = bar_x + fill_w
+                handle_cy = sy + 22 + bar_h // 2
+                pygame.draw.circle(surface, (255, 255, 255), (handle_cx, handle_cy), scale(7))
+                pygame.draw.circle(surface, (52, 211, 153), (handle_cx, handle_cy), scale(4))
+                self._menu_buttons[f"vol_{key}"] = bg_rect.inflate(scale(10), scale(10))
+                pct_lbl = f"{int(val * 100)}%"
+                draw_text(surface, pct_lbl, get_font(scale(11), True), (52, 211, 153), bar_x + bar_w + scale(18), sy + 22 + bar_h // 2)
+            back_rect = pygame.Rect(SCREEN_WIDTH // 2 - 60, my + mh - 50, 120, 36)
+            hover = back_rect.collidepoint(mouse_pos)
+            draw_panel(surface, back_rect, (30, 35, 55) if not hover else (50, 55, 75), (100, 120, 200), 8)
+            draw_text(surface, "Volver", get_font(scale(14), True), (241, 245, 249), back_rect.centerx, back_rect.centery)
+            self._menu_buttons["back"] = back_rect
+        else:
+            draw_text(surface, "MENU", get_font(scale(20), True), COLOR_CYAN, SCREEN_WIDTH // 2, my + 30)
+            btn_w, btn_h = 200, 40
+            btn_x = (SCREEN_WIDTH - btn_w) // 2
+            labels = ["Continuar", "Configuracion", "Salir"]
+            actions = ["continue", "settings", "quit"]
+            self._menu_buttons = {}
+            for i, (lbl, act) in enumerate(zip(labels, actions)):
+                by = my + 90 + i * 60
+                rect = pygame.Rect(btn_x, by, btn_w, btn_h)
+                hover = rect.collidepoint(mouse_pos)
+                draw_panel(surface, rect, (30, 35, 55) if not hover else (50, 55, 75), (100, 120, 200), 8)
+                draw_text(surface, lbl, get_font(scale(15), True), (241, 245, 249), rect.centerx, rect.centery)
+                self._menu_buttons[act] = rect
+
+    def _update_volume_from_slider(self, action, mouse_x, rect):
+        global MASTER_VOLUME, SFX_VOLUME, MUSIC_VOLUME
+        rel_x = mouse_x - rect.x
+        val = max(0.0, min(1.0, rel_x / rect.width))
+        if action == "vol_master" or action == "volume":
+            MASTER_VOLUME = val
+        elif action == "vol_sfx":
+            SFX_VOLUME = val
+        elif action == "vol_music":
+            MUSIC_VOLUME = val
+        self._set_music_state(self.game_state == "playing")
+        self._music_current_vol = self._music_target_vol
+        pygame.mixer.music.set_volume(self._music_current_vol)
+
+    def _handle_menu_click(self, mouse_pos):
+        if not hasattr(self, '_menu_buttons'):
+            return
+        global MASTER_VOLUME, SFX_VOLUME, MUSIC_VOLUME
+        for action, rect in self._menu_buttons.items():
+            if rect.collidepoint(mouse_pos):
+                if action == "continue":
+                    self.menu_open = False
+                elif action == "settings":
+                    self.settings_open = True
+                elif action == "quit":
+                    self.menu_open = False
+                    self.game_state = "menu"
+                    self._stop_music()
+                elif action == "back":
+                    self.settings_open = False
+                elif action.startswith("vol"):
+                    self._update_volume_from_slider(action, mouse_pos[0], rect)
+                break
+
+    def _handle_main_menu_click(self, mouse_pos):
+        if not hasattr(self, 'main_menu_buttons'):
+            return
+        global MASTER_VOLUME, SFX_VOLUME, MUSIC_VOLUME
+        if self.settings_open:
+            if hasattr(self, '_settings_buttons'):
+                for action, rect in self._settings_buttons.items():
+                    if rect.collidepoint(mouse_pos):
+                        if action == "back":
+                            self.settings_open = False
+                        elif action.startswith("vol"):
+                            self._update_volume_from_slider(action, mouse_pos[0], rect)
+                        break
+            return
+        for action, rect in self.main_menu_buttons.items():
+            if rect.collidepoint(mouse_pos):
+                if action == "new_game":
+                    self._start_new_game()
+                elif action == "settings":
+                    self.settings_open = True
+                elif action == "quit":
+                    self.running = False
+                break
+
     def handle_global_events(self):
         mouse_pos = pygame.mouse.get_pos()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_r:
+                if self.game_state == "menu":
+                    if event.key == pygame.K_ESCAPE:
+                        if self.settings_open:
+                            self.settings_open = False
+                        else:
+                            self.running = False
+                elif event.key == pygame.K_r:
                     self.r_hold_start = time.time()
                     self.r_holding = True
                 elif event.key == pygame.K_ESCAPE:
-                    self.running = False
-                elif event.key == pygame.K_SPACE:
-                    self.start_spin()
-                elif event.key == pygame.K_n:
-                    if self.game_won and self.has_won:
+                    if self.game_over or self.game_won:
+                        self.game_state = "menu"
+                        self.game_over = False
                         self.game_won = False
-                    self.advance_round_clean()
+                        self._stop_music()
+                    elif self.settings_open:
+                        self.settings_open = False
+                    elif self.menu_open:
+                        self.menu_open = False
+                    else:
+                        self.menu_open = not self.menu_open
+                elif event.key == pygame.K_SPACE:
+                    if not self.menu_open:
+                        self.start_spin()
+                elif event.key == pygame.K_n:
+                    if not self.menu_open:
+                        if self.game_won and self.has_won:
+                            self.game_won = False
+                        self.advance_round_clean()
             elif event.type == pygame.KEYUP:
                 if event.key == pygame.K_r:
                     self.r_holding = False
                     self.reset_hold_time = 0
 
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                buttons = None
+                if self.game_state == "menu" and self.settings_open and hasattr(self, '_settings_buttons'):
+                    buttons = self._settings_buttons
+                elif self.menu_open and self.settings_open and hasattr(self, '_menu_buttons'):
+                    buttons = self._menu_buttons
+                if buttons:
+                    for action, rect in buttons.items():
+                        if rect.collidepoint(mouse_pos) and action.startswith("vol"):
+                            self._dragging_slider = (buttons, action)
+                            break
+                if self.game_state == "menu":
+                    self._handle_main_menu_click(mouse_pos)
+                    return
+
+                if self.menu_open:
+                    self._handle_menu_click(mouse_pos)
+                    return
+
                 if self.overlay_open and self.booster_anim_progress >= 0.8:
                     for c_rect, idx in self.booster_clickable_cards:
                         if c_rect.collidepoint(mouse_pos):
@@ -1594,6 +2042,15 @@ class PygameMathRoulette:
                 for s_btn in self.shop_buttons:
                     s_btn.handle_event(event, mouse_pos)
                 self.handle_relic_sales(mouse_pos)
+
+            elif event.type == pygame.MOUSEMOTION:
+                if self._dragging_slider is not None:
+                    buttons, action = self._dragging_slider
+                    if action in buttons:
+                        self._update_volume_from_slider(action, event.pos[0], buttons[action])
+
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                self._dragging_slider = None
 
         if self.r_holding:
             elapsed = time.time() - self.r_hold_start
