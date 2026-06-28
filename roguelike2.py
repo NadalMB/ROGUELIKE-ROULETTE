@@ -80,6 +80,15 @@ BOSS_BLINDS = [
 
 NO_BOSS = {"id": "none", "name": "[LIBRE] SIN RESTRICCIONES", "desc": "Ronda inicial de aprendizaje. Sin penalizadores."}
 
+NEGATIVE_SCHEDULE = {
+    2: {"type": "sub", "value": 1, "name": "-1 [CR]", "rarity": "Común"},
+    4: {"type": "sub", "value": 3, "name": "-3 [CR]", "rarity": "Raro"},
+    6: {"type": "sub", "value": 4, "name": "-4 [CR]", "rarity": "Épico"},
+    8: {"type": "div", "value": 1.2, "name": "/1.2 [CR]", "rarity": "Raro"},
+    10: {"type": "div", "value": 1.4, "name": "/1.4 [CR]", "rarity": "Épico"},
+    12: {"type": "div", "value": 1.5, "name": "/1.5 [CR]", "rarity": "Legendario"},
+}
+
 # --- AUDIO SINTÉTICO ---
 def generate_click_sound(pitch_factor=1.0, dual_mode=False):
     duration = 0.025; sample_rate = 22050
@@ -120,9 +129,71 @@ SOUND_FAIL = generate_fail_sound()
 CLICK_POOL_SINGLE = [generate_click_sound(f, False) for f in [0.9, 0.95, 1.0, 1.05, 1.1]]
 CLICK_POOL_DUAL = [generate_click_sound(f, True) for f in [0.85, 0.9, 0.95, 1.0, 1.05]]
 
+def generate_buy_sound():
+    duration = 0.2; sample_rate = 22050
+    num_samples = int(duration * sample_rate)
+    buf = array.array('h', [0] * num_samples)
+    for i in range(num_samples):
+        t = i / sample_rate
+        freq = 800 + (t * 2000)
+        val = int(12000 * math.sin(2 * math.pi * freq * t))
+        buf[i] = int(val * (1.0 - (i / num_samples)))
+    return pygame.mixer.Sound(buffer=buf)
+
+def generate_reroll_sound():
+    duration = 0.15; sample_rate = 22050
+    num_samples = int(duration * sample_rate)
+    buf = array.array('h', [0] * num_samples)
+    for i in range(num_samples):
+        t = i / sample_rate
+        freq = 200 + (t * 400) + int(t * 60) * 50
+        val = 6000 if (int(t * freq * 2) % 2 == 0) else -6000
+        buf[i] = int(val * (1.0 - (i / num_samples)))
+    return pygame.mixer.Sound(buffer=buf)
+
+def generate_next_round_sound():
+    duration = 0.4; sample_rate = 22050
+    num_samples = int(duration * sample_rate)
+    buf = array.array('h', [0] * num_samples)
+    for i in range(num_samples):
+        t = i / sample_rate
+        freq = 400 + (t * 600)
+        val = int(10000 * (math.sin(2 * math.pi * freq * t) + 0.5 * math.sin(2 * math.pi * freq * 1.5 * t)))
+        buf[i] = int(val * (1.0 - (i / num_samples)))
+    return pygame.mixer.Sound(buffer=buf)
+
+def generate_sparkle_sound():
+    duration = 0.25; sample_rate = 22050
+    num_samples = int(duration * sample_rate)
+    buf = array.array('h', [0] * num_samples)
+    for i in range(num_samples):
+        t = i / sample_rate
+        freq = 1200 + (t * 3000)
+        val = int(8000 * math.sin(2 * math.pi * freq * t) * (0.5 + 0.5 * math.sin(2 * math.pi * 40 * t)))
+        buf[i] = int(val * (1.0 - (i / num_samples)))
+    return pygame.mixer.Sound(buffer=buf)
+
+def generate_relic_sound():
+    duration = 0.35; sample_rate = 22050
+    num_samples = int(duration * sample_rate)
+    buf = array.array('h', [0] * num_samples)
+    for i in range(num_samples):
+        t = i / sample_rate
+        freq = 500 + (t * 1200)
+        val = int(10000 * (math.sin(2 * math.pi * freq * t) + 0.3 * math.sin(2 * math.pi * freq * 2.0 * t)))
+        buf[i] = int(val * (1.0 - (i / num_samples)))
+    return pygame.mixer.Sound(buffer=buf)
+
+SOUND_BUY = generate_buy_sound()
+SOUND_REROLL = generate_reroll_sound()
+SOUND_NEXT_ROUND = generate_next_round_sound()
+SOUND_SPARKLE = generate_sparkle_sound()
+SOUND_RELIC = generate_relic_sound()
+
 MASTER_VOLUME = 1.0
 SFX_VOLUME = 1.0
 MUSIC_VOLUME = 1.0
+MUSIC_VOLUME_CAP = 0.4
 
 def play_sound(sound):
     sound.set_volume(MASTER_VOLUME * SFX_VOLUME)
@@ -188,6 +259,17 @@ VOUCHER_DEFS = {
         "desc": "Aumenta +1 tus tiradas maximas.",
         "primary": (16, 185, 129), "secondary": (110, 231, 183),
     },
+}
+
+RELICS_POOL = {
+    "tarjeta_clonada": {"name": "Tarjeta Clonada", "desc": "Permite saldo negativo de hasta -15 $.", "price": 12, "rarity": "Raro"},
+    "mejora_progresiva": {"name": "Mejora Progresiva", "desc": "Al tocar una casilla positiva Com\u00fan o Raro, mejora permanentemente al siguiente escal\u00f3n.", "price": 28, "rarity": "\u00c9pico"},
+    "duplicador_cuantico": {"name": "Duplicador Cu\u00e1ntico", "desc": "Los vales repetidos pueden aparecer en sobres. Permite acumular copias extra de vales.", "price": 40, "rarity": "Rainbow"},
+    "recompensa_extra": {"name": "Recompensa Extra", "desc": "Al caer en una casilla negativa con recompensa, +2 $ extra.", "price": 4, "rarity": "Com\u00fan"},
+    "racha_cortada": {"name": "Racha Cortada", "desc": "Si 2 tiradas seguidas son negativas, +2 CR.", "price": 6, "rarity": "Com\u00fan"},
+    "tercera_vez": {"name": "Tercera Vez", "desc": "Si una misma casilla sale 3 veces seguidas en cualquier ruleta (<50% prob), abre un sobre gratis.", "price": 16, "rarity": "Raro"},
+    "suerte_par": {"name": "Suerte Par", "desc": "Todas las casillas con recompensa de dinero dan el m\u00e1ximo de la ronda.", "price": 30, "rarity": "\u00c9pico"},
+    "sobre_seguro": {"name": "Sobre Seguro", "desc": "La primera casilla de cada ronda es un sobre gratuito.", "price": 50, "rarity": "Legendario"},
 }
 
 def draw_voucher_icon(surface, voucher_id, cx, cy, size, tick=0.0):
@@ -370,6 +452,13 @@ class PygameMathRoulette:
         self.overlay_open = False
         self.menu_open = False
         self.settings_open = False
+        self.relic_selection_open = False
+        self.relic_selection_options = []
+        self.relic_selection_progress = 0.0
+        self.selected_relic_idx = None
+        self.relic_selection_clickable = []
+        self.relic_selection_replace_mode = False
+        self.relic_selection_replace_idx = -1
         self.booster_options = []       
         self.booster_buttons = []
         self.booster_clickable_cards = []
@@ -379,12 +468,6 @@ class PygameMathRoulette:
         self.relics = []
         self.has_won = False
         self.upgrade_anim = None
-        self.RELICS_POOL = {
-            "tarjeta_clonada": {"name": "Tarjeta Clonada", "desc": "Permite saldo negativo de hasta -15 $.", "price": 12, "rarity": "Raro"},
-            "segunda_oportunidad": {"name": "Segunda Oportunidad", "desc": "10% de probabilidad de evadir una casilla negativa y repetir el giro sin coste.", "price": 20, "rarity": "Raro"},
-            "mejora_progresiva": {"name": "Mejora Progresiva", "desc": "Al tocar una casilla positiva Común o Raro, mejora permanentemente al siguiente escalón.", "price": 28, "rarity": "Épico"},
-            "duplicador_cuantico": {"name": "Duplicador Cuántico", "desc": "Los vales repetidos pueden aparecer en sobres. Permite acumular copias extra de vales.", "price": 40, "rarity": "Rainbow"}
-        }
         self.UPGRADE_MAP = {
             "+1 [CR]": {"type": "add", "value": 2, "name": "+2 [CR]", "rarity": "Común"},
             "+2 [CR]": {"type": "add", "value": 3, "name": "+3 [CR]", "rarity": "Común"},
@@ -431,9 +514,9 @@ class PygameMathRoulette:
 
     def _set_music_state(self, in_game):
         if in_game:
-            self._music_target_vol = MASTER_VOLUME * MUSIC_VOLUME * 0.85
+            self._music_target_vol = MASTER_VOLUME * MUSIC_VOLUME * MUSIC_VOLUME_CAP * 0.85
         else:
-            self._music_target_vol = MASTER_VOLUME * MUSIC_VOLUME * 0.15
+            self._music_target_vol = MASTER_VOLUME * MUSIC_VOLUME * MUSIC_VOLUME_CAP * 0.15
 
     def _stop_music(self):
         self._set_music_state(False)
@@ -444,7 +527,7 @@ class PygameMathRoulette:
         diff = self._music_target_vol - self._music_current_vol
         if abs(diff) > 0.001:
             self._music_current_vol += diff * 0.04
-            self._music_current_vol = max(0.0, min(MASTER_VOLUME * MUSIC_VOLUME, self._music_current_vol))
+            self._music_current_vol = max(0.0, min(MASTER_VOLUME * MUSIC_VOLUME * MUSIC_VOLUME_CAP, self._music_current_vol))
             pygame.mixer.music.set_volume(self._music_current_vol)
 
     def _draw_main_menu(self, surface):
@@ -635,12 +718,17 @@ class PygameMathRoulette:
         self.upgrade_anim = None
         self.is_spinning = False
         self.last_winners = []
+        self.consecutive_negative = 0
+        self.last_winner_item = {}
+        self.consecutive_same_item = {}
+        self.sobre_seguro_triggered = False
+        self.negatives_added = set()
+        self.sobre_booster_placed = False
         
         self.deck = [
             {"type": "add", "value": 2, "name": "+2 [CR]", "rarity": "Común"},
             {"type": "add", "value": 1, "name": "+1 [CR]", "rarity": "Común"},
             {"type": "add", "value": 3, "name": "+3 [CR]", "rarity": "Común"},
-            {"type": "sub", "value": 1, "name": "-1 [CR]", "rarity": "Común"},
         ]
         self.roulette_items = [[random.choice(self.deck) for _ in range(15)]]
         self.positions = [0.0]
@@ -662,21 +750,7 @@ class PygameMathRoulette:
         return {name: (count / total_cards) * 100 for name, count in counts.items()}
 
     def get_current_shop_ratios(self):
-        r = self.round
-        p_rainbow = min(0.0015 * (r ** 2.0), 0.045)
-        p_legendario = min(0.008 * (r ** 1.6), 0.14)
-        p_epico = min(0.04 + 0.025 * (r ** 0.85), 0.22)
-        p_raro = min(0.12 + 0.04 * (r ** 0.65), 0.34)
-        total = p_rainbow + p_legendario + p_epico + p_raro
-        if total > 0.98:
-            scale_factor = 0.98 / total
-            p_rainbow *= scale_factor; p_legendario *= scale_factor
-            p_epico *= scale_factor; p_raro *= scale_factor
-            p_comun = 0.02
-        else:
-            p_comun = 1.0 - total
-        return {"Común": p_comun*100, "Raro": p_raro*100, "Épico": p_epico*100,
-                "Legendario": p_legendario*100, "Rainbow": p_rainbow*100}
+        return {"Común": 70.9, "Raro": 20.0, "Épico": 8.0, "Legendario": 1.0, "Rainbow": 0.1}
 
     def is_negative(self, item):
         if item.get("is_box") or item.get("is_relic") or item.get("is_voucher"): return False
@@ -701,9 +775,9 @@ class PygameMathRoulette:
             available.append({"id": "pack_up", **{k: VOUCHER_DEFS["pack_up"][k] for k in ("name", "price", "desc")}})
         if not self.has_shop_upgrade:
             available.append({"id": "shop_up", **{k: VOUCHER_DEFS["shop_up"][k] for k in ("name", "price", "desc")}})
-        if self.dual_roulette_count < 4:
+        if self.dual_roulette_count < 1:
             available.append({"id": "dual_roulette", **{k: VOUCHER_DEFS["dual_roulette"][k] for k in ("name", "price", "desc")}})
-        if self.extra_spins_per_round < 3:
+        if self.extra_spins_per_round < 1:
             available.append({"id": "extra_spin", **{k: VOUCHER_DEFS["extra_spin"][k] for k in ("name", "price", "desc")}})
         return available
 
@@ -711,29 +785,18 @@ class PygameMathRoulette:
         self.shop_offers = []
         is_inflated = self.current_boss["id"] == "inflation"
         slots = 4 if self.has_shop_upgrade else 3
-        
-        available_relics = [rk for rk in self.RELICS_POOL.keys() if not any(r["id"] == rk for r in self.relics)]
+        has_sobre_seguro = any(r["id"] == "sobre_seguro" for r in self.relics)
         
         for s in range(slots):
             rarity = self.get_progressive_rarity()
             
-            _try_relic = False
-            if rarity in ["Legendario", "Rainbow"]:
-                _try_relic = random.random() < 0.5
-            elif rarity == "Épico":
-                _try_relic = random.random() < 0.35
+            # Sobre Seguro: solo la primera tienda de la ronda tiene un sobre gratis
+            if has_sobre_seguro and not self.sobre_booster_placed:
+                self.shop_offers.append({"name": "Sobre Gratis [M]", "price": 0, "is_box": True, "is_relic": False, "rarity": "Común"})
+                self.sobre_booster_placed = True
+                continue
             
-            if _try_relic and available_relics:
-                rk = random.choice(available_relics)
-                r_info = self.RELICS_POOL[rk]
-                price = r_info["price"] + (self.round * 2)
-                if is_inflated: price = int(price * 1.30)
-                self.shop_offers.append({
-                    "id": rk, "name": r_info["name"], "desc": r_info["desc"], 
-                    "price": price, "is_relic": True, "is_box": False, "rarity": rarity
-                })
-                available_relics.remove(rk)
-            elif random.random() < 0.18:
+            if random.random() < 0.18:
                 box_price = 9
                 if is_inflated: box_price = int(box_price * 1.30)
                 self.shop_offers.append({"name": "Caja Sorpresa [M]", "price": box_price, "is_box": True, "is_relic": False, "rarity": "Común"})
@@ -841,6 +904,7 @@ class PygameMathRoulette:
         self.reroll_cost = min(99, self.reroll_cost * 2)
         self.buttons[self.btn_reroll_idx].text = f"Reroll: {self.reroll_cost} $"
         self.generate_shop_offers()
+        play_sound(SOUND_REROLL)
 
     def check_funds_and_spins_integrity(self):
         if self.money < 0:
@@ -895,17 +959,25 @@ class PygameMathRoulette:
             return
 
         self.round += 1
-        self.target_money = float(self.round ** 2.2 * 1.5 + 15 + random.randint(2, 5))
+        # Anadir progresivamente casillas negativas al mazo segun la ronda
+        for r_needed, neg_card in sorted(NEGATIVE_SCHEDULE.items()):
+            if self.round >= r_needed and r_needed not in self.negatives_added:
+                self.deck.append(neg_card.copy())
+                self.negatives_added.add(r_needed)
+        self.target_money = float(self.round ** 2.5 * 2.0 + 20 + random.randint(2, 5))
         self.current_boss = random.choice(BOSS_BLINDS) if self.round > 1 else NO_BOSS
         self.max_spins = 5 + self.extra_spins_per_round
         self.spins_left = self.max_spins - 1 if self.current_boss["id"] == "minus_spin" else self.max_spins
         self.reroll_cost = 1
         self.buttons[self.btn_reroll_idx].text = f"Reroll: {self.reroll_cost} $"
         self.last_winners = []
+        self.sobre_booster_placed = False
         self.generate_shop_offers()
         self.generate_voucher_offer()
+        self.generate_relic_choices()
         self.log_text = f"RONDA {self.round} INICIADA. MODIFICADORES RECALCULADOS."
         self.log_color = (52, 211, 153)
+        play_sound(SOUND_NEXT_ROUND)
 
     def trigger_victory(self):
         self.game_won = True
@@ -927,9 +999,12 @@ class PygameMathRoulette:
         self.velocities = [random.uniform(75.0, 95.0)]
         self.last_card_triggers = [-1]
         
+        has_suerte_par = any(r["id"] == "suerte_par" for r in self.relics)
+        cash_max = self.cash_bonus_max_base + self.round // 3
+        
         for card in self.roulette_items[0]:
             if random.random() < self.cash_bonus_chance:
-                cash_val = random.randint(self.cash_bonus_min, self.cash_bonus_max_base + self.round // 3)
+                cash_val = cash_max if has_suerte_par else random.randint(self.cash_bonus_min, cash_max)
                 card["cash_bonus"] = cash_val
         
         for extra in range(1, count):
@@ -940,7 +1015,7 @@ class PygameMathRoulette:
             self.last_card_triggers.append(-1)
             for card in self.roulette_items[extra]:
                 if random.random() < self.cash_bonus_chance:
-                    cash_val = random.randint(self.cash_bonus_min, self.cash_bonus_max_base + self.round // 3)
+                    cash_val = cash_max if has_suerte_par else random.randint(self.cash_bonus_min, cash_max)
                     card["cash_bonus"] = cash_val
 
     def update_physics(self, dt):
@@ -1041,32 +1116,63 @@ class PygameMathRoulette:
         old_money = self.money
         old_cash = self.cash
         log_build = ""
-        has_segunda = any(r["id"] == "segunda_oportunidad" for r in self.relics)
         has_mejora = any(r["id"] == "mejora_progresiva" for r in self.relics)
+        has_recompensa = any(r["id"] == "recompensa_extra" for r in self.relics)
+        has_racha = any(r["id"] == "racha_cortada" for r in self.relics)
+        has_tercera = any(r["id"] == "tercera_vez" for r in self.relics)
+        has_suerte_par = any(r["id"] == "suerte_par" for r in self.relics)
         upgrade_data = []
-        rolled_back = False
+        extra_log = ""
         
         for ri in range(len(self.roulette_items)):
             idx = max(0, min(int((self.positions[ri] + (self.card_step / 2)) // self.card_step), len(self.roulette_items[ri]) - 1))
             winner = self.roulette_items[ri][idx]
-            
+
             if ri == 0:
                 self.resolve_item_effect(winner)
             else:
                 self.resolve_item_effect(winner)
             
-            if has_segunda and self.is_negative(winner) and random.random() < 0.10:
-                self.money = old_money
-                self.cash = old_cash
-                self.log_text = "¡SEGUNDA OPORTUNIDAD! Casilla negativa evadida. Gira de nuevo."
-                self.log_color = (52, 211, 153)
-                y_emit = self.canvas_y + 50 if len(self.roulette_items) > 1 else self.canvas_y + self.canvas_height // 2
-                self.create_impact_particles(self.canvas_x + self.canvas_width // 2, y_emit, (52, 211, 153), count=50)
-                rolled_back = True
-                break
+            # Suerte Par: todas las casillas con recompensa ya tienen el maximo asignado al generar la ruleta
+            
+            # Recompensa Extra: +2$ al caer en casilla negativa con recompensa
+            if has_recompensa and self.is_negative(winner) and winner.get("cash_bonus", 0) > 0:
+                self.cash += 2
+                extra_log += " +2$ (Recompensa Extra)"
             
             self.last_winners.append(idx)
-            c = (248, 113, 113) if self.is_negative(winner) else RARITIES.get(winner["rarity"], {"color": (52, 211, 153)})["color"]
+            
+            # Track consecutive negative for Racha Cortada
+            is_neg = self.is_negative(winner)
+            if has_racha:
+                if is_neg:
+                    self.consecutive_negative += 1
+                    if self.consecutive_negative >= 2:
+                        self.money += 2
+                        extra_log += " +2CR (Racha Cortada)"
+                        self.consecutive_negative = 0
+                else:
+                    self.consecutive_negative = 0
+            
+            # Track same value for Tercera Vez (por cada ruleta individual)
+            if has_tercera:
+                item_key = (winner.get("type"), winner.get("value"))
+                prev = self.last_winner_item.get(ri)
+                if item_key == prev:
+                    count = self.consecutive_same_item.get(ri, 0) + 1
+                    self.consecutive_same_item[ri] = count
+                    if count >= 3:
+                        count_in_deck = sum(1 for c in self.deck if (c.get("type"), c.get("value")) == item_key)
+                        prob = count_in_deck / max(1, len(self.deck))
+                        if prob < 0.5:
+                            extra_log += " (Tercera Vez: Sobre!)"
+                            self.open_booster_pack()
+                            self.consecutive_same_item[ri] = 0
+                else:
+                    self.consecutive_same_item[ri] = 1
+                self.last_winner_item[ri] = item_key
+            
+            c = (248, 113, 113) if is_neg else RARITIES.get(winner["rarity"], {"color": (52, 211, 153)})["color"]
             y_pos = self.canvas_y + 50 if len(self.roulette_items) > 1 else self.canvas_y + self.canvas_height // 2
             self.create_impact_particles(self.canvas_x + self.canvas_width // 2, y_pos, c, count=40)
             
@@ -1089,9 +1195,6 @@ class PygameMathRoulette:
                 self.roulette_items[ri][idx] = upgraded.copy()
                 upgrade_data.append({"idx": idx, "old_name": winner["name"], "new_name": upgraded["name"], "new_item": upgraded.copy()})
         
-        if rolled_back:
-            return
-        
         delta_cr = self.money - old_money
         delta_cash = self.cash - old_cash
         log_parts = [log_build]
@@ -1101,6 +1204,8 @@ class PygameMathRoulette:
         if delta_cash != 0:
             sign = "+" if delta_cash >= 0 else ""
             log_parts.append(f"$: {sign}{delta_cash:.0f}")
+        if extra_log:
+            log_parts.append(extra_log)
         self.log_text = " >> ".join(log_parts)
         self.log_color = (52, 211, 153) if (delta_cr >= 0 and delta_cash >= 0) else (248, 113, 113)
         self.shake_intensity = 8
@@ -1140,7 +1245,7 @@ class PygameMathRoulette:
             if len(self.relics) < self.relic_slots:
                 self.relics.append({"id": item["id"], "name": item["name"], "desc": item["desc"], "rarity": item["rarity"]})
                 self.shop_offers[idx] = None
-                self.log_text = f"[SISTEMA] PASIVO ADQUIRIDO: {item['name']}"
+                self.log_text = f"[SISTEMA] RELIQUIA ADQUIRIDA: {item['name']}"
                 self.log_color = COLOR_GOLD
             else:
                 self.cash += item["price"]
@@ -1152,6 +1257,7 @@ class PygameMathRoulette:
             
         self.rebuild_shop_buttons()
         self.check_funds_and_spins_integrity()
+        play_sound(SOUND_BUY)
 
     def buy_voucher(self):
         if self.game_over or not self.current_voucher or self.overlay_open or self.is_spinning: return
@@ -1172,16 +1278,17 @@ class PygameMathRoulette:
         self.current_voucher = None
         self.rebuild_shop_buttons()
         self.check_funds_and_spins_integrity()
+        play_sound(SOUND_BUY)
 
     def open_booster_pack(self):
         self.overlay_open = True
         self.booster_anim_progress = 0.0
         self.selected_booster_idx = None 
         self.booster_options = []
+        play_sound(SOUND_SPARKLE)
         cards_count = 4 if self.has_pack_upgrade else 3
         
         active_relic_ids = [r["id"] for r in self.relics]
-        available_relics = [rk for rk in self.RELICS_POOL.keys() if rk not in active_relic_ids]
         has_duplicador = "duplicador_cuantico" in active_relic_ids
         available_vouchers = self.get_available_vouchers()
         # With Duplicador Cuantico, allow ONE extra copy per voucher type in boosters
@@ -1195,29 +1302,22 @@ class PygameMathRoulette:
                            else self.extra_spins_per_round if vid == "extra_spin"
                            else (1 if self.has_pack_upgrade else 0) if vid == "pack_up"
                             else (1 if self.has_shop_upgrade else 0))
-                max_allowed = (4 if vid == "dual_roulette" else (3 if vid == "extra_spin" else 2))
+                max_allowed = 1
                 if current >= 1 and current < max_allowed:
                     extra_vouchers.append({"id": vid, **{k: vdef[k] for k in ("name", "price", "desc")}})
             available_vouchers = available_vouchers + extra_vouchers
         
         while len(self.booster_options) < cards_count:
             roll = random.random()
-            if roll < 0.001 and (available_relics or available_vouchers):
-                choice = random.choice(["relic", "voucher"] if (available_relics and available_vouchers) else (["relic"] if available_relics else ["voucher"]))
-                if choice == "relic":
-                    rk = random.choice(available_relics)
-                    r_info = self.RELICS_POOL[rk]
-                    picked = {"id": rk, "name": r_info["name"], "desc": r_info["desc"], "is_relic": True, "rarity": "Rainbow", "type": "ultra"}
-                    available_relics.remove(rk)
-                else:
-                    v = random.choice(available_vouchers)
-                    picked = {"id": v["id"], "name": v["name"], "desc": v["desc"], "is_voucher": True, "rarity": "Rainbow", "type": "ultra"}
-                    available_vouchers.remove(v)
+            if roll < 0.001 and available_vouchers:
+                v = random.choice(available_vouchers)
+                picked = {"id": v["id"], "name": v["name"], "desc": v["desc"], "is_voucher": True, "rarity": "Rainbow", "type": "ultra"}
+                available_vouchers.remove(v)
             else:
-                if roll < 0.004: rarity = "Rainbow"
-                elif roll < 0.015: rarity = "Legendario"
-                elif roll < 0.15: rarity = "Épico"
-                elif roll < 0.45: rarity = "Raro"
+                if roll < 0.002: rarity = "Rainbow"
+                elif roll < 0.012: rarity = "Legendario"
+                elif roll < 0.10: rarity = "Épico"
+                elif roll < 0.35: rarity = "Raro"
                 else: rarity = "Común"
                 picked = random.choice(POOL_ITEMS[rarity]).copy()
             
@@ -1271,7 +1371,8 @@ class PygameMathRoulette:
             elif v_id == "extra_spin": self.extra_spins_per_round += 1; self.max_spins += 1; self.spins_left += 1
         else:
             self.deck.append(item)
-            
+        
+        play_sound(SOUND_BUY)
         self.overlay_open = False
         self.booster_options = []
         self.selected_booster_idx = None
@@ -1285,13 +1386,219 @@ class PygameMathRoulette:
             slot_rect = pygame.Rect(x_pos, self.shelf_y, self.relic_box_w, self.shelf_h)
             if slot_rect.collidepoint(mouse_pos):
                 relic = self.relics[i]
-                base_val = self.RELICS_POOL[relic["id"]]["price"]
-                refund = max(1, base_val // 2)
+                rar = relic["rarity"]
+                rar_mult = {"Común": 0.4, "Raro": 0.5, "Épico": 0.6, "Legendario": 0.75, "Rainbow": 1.0}
+                mult = rar_mult.get(rar, 0.5)
+                refund = max(1, int(RELICS_POOL[relic["id"]]["price"] * mult))
                 self.cash += refund
                 self.relics.pop(i)
                 self.rebuild_shop_buttons()
                 self.check_funds_and_spins_integrity()
                 break
+
+    def generate_relic_choices(self):
+        self.relic_selection_open = True
+        self.relic_selection_progress = 0.0
+        self.selected_relic_idx = None
+        self.relic_selection_replace_mode = False
+        self.relic_selection_replace_idx = -1
+        self.relic_selection_options = []
+        available_by_rarity = {}
+        for rk in RELICS_POOL:
+            if not any(r["id"] == rk for r in self.relics):
+                rar = RELICS_POOL[rk]["rarity"]
+                available_by_rarity.setdefault(rar, []).append(rk)
+        if not available_by_rarity:
+            self.relic_selection_open = False
+            return
+        for _ in range(3):
+            rarity = self.get_progressive_rarity()
+            pool = available_by_rarity.get(rarity, [])
+            if not pool:
+                all_available = [rk for sub in available_by_rarity.values() for rk in sub]
+                if not all_available:
+                    break
+                rk = random.choice(all_available)
+            else:
+                rk = random.choice(pool)
+            r_info = dict(RELICS_POOL[rk])
+            r_info["id"] = rk
+            self.relic_selection_options.append(r_info)
+            for rar_list in available_by_rarity.values():
+                if rk in rar_list:
+                    rar_list.remove(rk)
+                    break
+    
+    def confirm_relic_selection(self):
+        if self.selected_relic_idx is None:
+            return
+        choice = self.relic_selection_options[self.selected_relic_idx]
+        rk = choice["id"]
+        if len(self.relics) < self.relic_slots:
+            self.relics.append({"id": rk, "name": choice["name"], "desc": choice["desc"], "rarity": choice["rarity"]})
+            self.log_text = f"[SISTEMA] RELIQUIA ADQUIRIDA: {choice['name']}"
+            self.log_color = COLOR_GOLD
+            self.relic_selection_open = False
+            self.relic_selection_options = []
+            self.selected_relic_idx = None
+            play_sound(SOUND_RELIC)
+            if rk == "sobre_seguro" and not self.sobre_booster_placed:
+                self.generate_shop_offers()
+        else:
+            self.relic_selection_replace_mode = True
+
+    def apply_relic_replace(self):
+        if self.relic_selection_replace_idx < 0 or self.selected_relic_idx is None:
+            return
+        choice = self.relic_selection_options[self.selected_relic_idx]
+        rk = choice["id"]
+        self.relics.pop(self.relic_selection_replace_idx)
+        self.relics.append({"id": rk, "name": choice["name"], "desc": choice["desc"], "rarity": choice["rarity"]})
+        self.log_text = f"[SISTEMA] RELIQUIA ADQUIRIDA: {choice['name']} (reemplazada)"
+        self.log_color = COLOR_GOLD
+        self.relic_selection_open = False
+        self.relic_selection_options = []
+        self.selected_relic_idx = None
+        self.relic_selection_replace_mode = False
+        self.relic_selection_replace_idx = -1
+        play_sound(SOUND_RELIC)
+        if rk == "sobre_seguro" and not self.sobre_booster_placed:
+            self.generate_shop_offers()
+
+    def close_relic_selection(self):
+        self.relic_selection_open = False
+        self.relic_selection_options = []
+        self.selected_relic_idx = None
+        self.relic_selection_replace_mode = False
+        self.relic_selection_replace_idx = -1
+
+    def _draw_relic_selection(self, surface, mouse_pos):
+        if not self.relic_selection_open:
+            return
+        self.relic_selection_progress += 0.025
+        if self.relic_selection_progress > 1.0:
+            self.relic_selection_progress = 1.0
+        
+        overlay_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        alpha_val = int(225 * min(1.0, self.relic_selection_progress * 1.5))
+        overlay_surf.fill((8, 9, 15, alpha_val))
+        surface.blit(overlay_surf, (0, 0))
+        
+        if self.relic_selection_replace_mode:
+            self._draw_relic_replace(surface, mouse_pos)
+            return
+        
+        mw, mh = min(900, SCREEN_WIDTH - 80), min(500, SCREEN_HEIGHT - 120)
+        mx = (SCREEN_WIDTH - mw) // 2
+        my = (SCREEN_HEIGHT - mh) // 2
+        draw_panel(surface, pygame.Rect(mx, my, mw, mh), BG_CANVAS, (139, 92, 246), 20, 2)
+        draw_text(surface, "/// SELECCIONA UNA RELIQUIA", get_font(13, True), (168, 85, 247), SCREEN_WIDTH // 2, my + 30)
+        draw_text(surface, "Elige sabiamente...", get_font(11), COLOR_TEXT_MUTED, SCREEN_WIDTH // 2, my + 50)
+        
+        card_w, card_h = 180, min(230, mh - 190)
+        total = len(self.relic_selection_options)
+        total_w = total * card_w + (total - 1) * 30
+        start_cx = (SCREEN_WIDTH - total_w) // 2
+        
+        self.relic_selection_clickable = []
+        for idx, r_info in enumerate(self.relic_selection_options):
+            delay = idx * 0.2
+            progress = max(0.0, min(1.0, (self.relic_selection_progress - delay) * 2.5))
+            ease = math.sin(progress * math.pi / 2)
+            cx = start_cx + idx * (card_w + 30)
+            cy = my + 80 + (1.0 - ease) * 160
+            
+            c_rect = pygame.Rect(cx, cy, card_w, card_h)
+            self.relic_selection_clickable.append(c_rect)
+            if progress > 0:
+                style = RARITIES.get(r_info["rarity"], {"bg": (45, 45, 60), "color": (255, 255, 255)})
+                border = style["color"]
+                if r_info["rarity"] == "Rainbow":
+                    border = rainbow_color(self.anim_tick * 4)
+                elif r_info["rarity"] == "Legendario":
+                    pulse = 0.6 + 0.4 * math.sin(self.anim_tick * 2.5)
+                    border = tuple(int(c * pulse) for c in (234, 179, 8))
+                
+                selected = self.selected_relic_idx == idx
+                draw_panel(surface, c_rect, style["bg"], COLOR_GOLD if selected else border, 12, 3 if selected else 1)
+                
+                pygame.draw.circle(surface, COLOR_GOLD, (c_rect.centerx, cy + 45), 24, 3)
+                draw_text(surface, "R", get_font(scale(18), True), COLOR_GOLD, c_rect.centerx, cy + 45)
+                draw_text(surface, r_info["name"], get_font(scale(13), True), style["color"], c_rect.centerx, cy + 80)
+                draw_text(surface, r_info["rarity"], get_font(scale(11)), COLOR_TEXT_MUTED, c_rect.centerx, cy + 100)
+                
+                if c_rect.collidepoint(mouse_pos):
+                    self.queue_tooltip(r_info["name"], r_info["desc"], mouse_pos)
+        
+        if self.relic_selection_progress >= 0.8:
+            btn_y = my + mh - 50
+            integrable = self.selected_relic_idx is not None
+            int_col = (16, 185, 129) if integrable else (50, 60, 70)
+            int_text = (255, 255, 255) if integrable else (100, 110, 120)
+            int_rect = pygame.Rect(SCREEN_WIDTH // 2 - 110, btn_y, 100, 36)
+            draw_panel(surface, int_rect, int_col, (52, 211, 153) if integrable else (70, 80, 90), 8)
+            draw_text(surface, "Integrar", get_font(scale(13), True), int_text, int_rect.centerx, int_rect.centery)
+            
+            can_rect = pygame.Rect(SCREEN_WIDTH // 2 + 10, btn_y, 100, 36)
+            hover_can = can_rect.collidepoint(mouse_pos)
+            draw_panel(surface, can_rect, (50, 55, 75) if not hover_can else (70, 75, 95), (100, 120, 200), 8)
+            draw_text(surface, "Cancelar", get_font(scale(13), True), (241, 245, 249), can_rect.centerx, can_rect.centery)
+            
+            self.relic_selection_buttons = {"integrar": int_rect, "cancelar": can_rect}
+
+    def _draw_relic_replace(self, surface, mouse_pos):
+        mw, mh = min(600, SCREEN_WIDTH - 80), min(400, SCREEN_HEIGHT - 120)
+        mx = (SCREEN_WIDTH - mw) // 2
+        my = (SCREEN_HEIGHT - mh) // 2
+        draw_panel(surface, pygame.Rect(mx, my, mw, mh), BG_CANVAS, (239, 68, 68), 20, 2)
+        draw_text(surface, "/// REEMPLAZAR RELIQUIA", get_font(14, True), (239, 68, 68), SCREEN_WIDTH // 2, my + 25)
+        draw_text(surface, "Selecciona cual vender para dejar espacio:", get_font(11), COLOR_TEXT_MUTED, SCREEN_WIDTH // 2, my + 48)
+        
+        slot_w = min(160, (mw - 60) // self.relic_slots)
+        gap = 16
+        total_w = self.relic_slots * slot_w + (self.relic_slots - 1) * gap
+        start_x = (SCREEN_WIDTH - total_w) // 2
+        slot_h = min(180, mh - 160)
+        
+        self.relic_selection_clickable = []
+        for i in range(self.relic_slots):
+            sx = start_x + i * (slot_w + gap)
+            sy = my + 70
+            slot_rect = pygame.Rect(sx, sy, slot_w, slot_h)
+            self.relic_selection_clickable.append(slot_rect)
+            
+            if i < len(self.relics):
+                relic = self.relics[i]
+                style = RARITIES.get(relic["rarity"], {"bg": (30, 30, 45), "color": (255, 255, 255)})
+                selected = self.relic_selection_replace_idx == i
+                border = (239, 68, 68) if selected else style["color"]
+                draw_panel(surface, slot_rect, style["bg"], border, 10, 3 if selected else 1)
+                draw_text(surface, relic["name"], get_font(scale(13), True), (255, 255, 255), slot_rect.centerx, sy + 30)
+                draw_text(surface, relic["rarity"], get_font(scale(10)), COLOR_TEXT_MUTED, slot_rect.centerx, sy + 52)
+                if slot_rect.collidepoint(mouse_pos):
+                    self.queue_tooltip(relic["name"], relic["desc"], mouse_pos)
+                desc = relic["desc"]
+                draw_text(surface, (desc[:32] + "...") if len(desc) > 32 else desc, get_font(scale(10)), COLOR_TEXT_MUTED, slot_rect.centerx, sy + 75)
+                if selected:
+                    draw_text(surface, "VENDER", get_font(scale(12), True), (239, 68, 68), slot_rect.centerx, sy + slot_h - 30)
+            else:
+                draw_panel(surface, slot_rect, (14, 16, 26), (30, 36, 50), 10)
+                draw_text(surface, "[ VACIO ]", get_font(scale(12), True), (60, 72, 95), slot_rect.centerx, slot_rect.centery)
+        
+        btn_y = my + mh - 50
+        ap_rect = pygame.Rect(SCREEN_WIDTH // 2 - 110, btn_y, 100, 36)
+        ap_valid = self.relic_selection_replace_idx >= 0
+        ap_col = (16, 185, 129) if ap_valid else (50, 60, 70)
+        ap_text = (255, 255, 255) if ap_valid else (100, 110, 120)
+        draw_panel(surface, ap_rect, ap_col, (52, 211, 153) if ap_valid else (70, 80, 90), 8)
+        draw_text(surface, "Aplicar", get_font(scale(13), True), ap_text, ap_rect.centerx, ap_rect.centery)
+        
+        can_rect = pygame.Rect(SCREEN_WIDTH // 2 + 10, btn_y, 100, 36)
+        hover_can = can_rect.collidepoint(mouse_pos)
+        draw_panel(surface, can_rect, (50, 55, 75) if not hover_can else (70, 75, 95), (100, 120, 200), 8)
+        draw_text(surface, "Cancelar", get_font(scale(13), True), (241, 245, 249), can_rect.centerx, can_rect.centery)
+        
+        self.relic_selection_buttons = {"aplicar": ap_rect, "cancelar": can_rect}
 
     def _get_item_visual(self, item, is_blinded):
         is_neg = self.is_negative(item)
@@ -1414,6 +1721,13 @@ class PygameMathRoulette:
 
         ronda_txt = f"RONDA {self.round}/{VICTORY_ROUND}" if not self.has_won else f"MODO INFINITO ● RONDA {self.round}"
         draw_text(surface, ronda_txt, get_font(scale(15), True), COLOR_CYAN, col1, mid_y - 10, "left")
+        # Prox. negativa
+        prox = min((r for r in NEGATIVE_SCHEDULE if r not in self.negatives_added), default=None)
+        if prox is not None:
+            neg_txt = f"Prox. negativa: Ronda {prox}"
+        else:
+            neg_txt = "Todas las negativas agregadas"
+        draw_text(surface, neg_txt, get_font(scale(9), True), (248, 113, 113), col1, mid_y + 10, "left")
         money_color = (52, 211, 153) if self.money >= 0 else (248, 113, 113)
         draw_text(surface, f"CR: {format_num(self.displayed_money)}", get_font(scale(15), True), money_color, col2, mid_y - 12, "left")
 
@@ -1589,7 +1903,7 @@ class PygameMathRoulette:
             draw_text(surface, f"{label}: {pct}", get_font(scale(12)), COLOR_TEXT_MUTED, rx + 16, ry, "left")
 
         shelf_y = self.shelf_y
-        draw_text(surface, f"PASIVOS  {len(self.relics)}/{self.relic_slots}", get_font(scale(13), True), COLOR_CYAN, self.margin, shelf_y - 18, "left")
+        draw_text(surface, f"RELIQUIAS  {len(self.relics)}/{self.relic_slots}", get_font(scale(13), True), COLOR_CYAN, self.margin, shelf_y - 18, "left")
 
         for idx in range(self.relic_slots):
             rx = self.relic_start_x + idx * (self.relic_box_w + self.relic_gap)
@@ -1599,8 +1913,11 @@ class PygameMathRoulette:
                 r_style = RARITIES.get(relic_data["rarity"], {"bg": (30, 30, 45), "color": (255, 255, 255)})
                 if slot_rect.collidepoint(mouse_pos):
                     draw_panel(surface, slot_rect, (80, 20, 20), (239, 68, 68), 10, 2)
-                    draw_text(surface, "PURGAR PASIVO", get_font(scale(14), True), (255, 100, 100), slot_rect.centerx, shelf_y + 28)
-                    draw_text(surface, f"+{max(1, self.RELICS_POOL[relic_data['id']]['price'] // 2)} $", get_font(scale(13), True), (255, 255, 255), slot_rect.centerx, shelf_y + 52)
+                    draw_text(surface, "PURGAR RELIQUIA", get_font(scale(14), True), (255, 100, 100), slot_rect.centerx, shelf_y + 28)
+                    rar = relic_data["rarity"]
+                    rar_mult = {"Común": 0.4, "Raro": 0.5, "Épico": 0.6, "Legendario": 0.75, "Rainbow": 1.0}
+                    mult = rar_mult.get(rar, 0.5)
+                    draw_text(surface, f"+{max(1, int(RELICS_POOL[relic_data['id']]['price'] * mult))} $", get_font(scale(13), True), (255, 255, 255), slot_rect.centerx, shelf_y + 52)
                     if not self.overlay_open:
                         self.queue_tooltip(relic_data["name"], relic_data["desc"], mouse_pos)
                 else:
@@ -1673,7 +1990,7 @@ class PygameMathRoulette:
                 draw_text(surface, "Sorpresa / Pack", get_font(scale(12)), (251, 191, 36), box_rect.centerx, text_y + scale(26))
             elif item.get("is_relic"):
                 draw_text(surface, item["name"], get_font(scale(15), True), COLOR_GOLD, box_rect.centerx, text_y)
-                draw_text(surface, "Pasivo / Reliquia", get_font(scale(12)), (234, 140, 8), box_rect.centerx, text_y + scale(26))
+                draw_text(surface, "Reliquia", get_font(scale(12)), (234, 140, 8), box_rect.centerx, text_y + scale(26))
                 if box_rect.collidepoint(mouse_pos) and not self.overlay_open:
                     self.queue_tooltip(item["name"], item["desc"], mouse_pos)
             else:
@@ -1815,6 +2132,9 @@ class PygameMathRoulette:
             if self.booster_anim_progress >= 0.8:
                 for b in self.booster_buttons:
                     b.draw(surface, mouse_pos)
+
+        if self.relic_selection_open:
+            self._draw_relic_selection(surface, mouse_pos)
 
         if self.game_over or self.game_won:
             end_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
@@ -2026,6 +2346,32 @@ class PygameMathRoulette:
 
                 if self.menu_open:
                     self._handle_menu_click(mouse_pos)
+                    return
+
+                if self.relic_selection_open and self.relic_selection_progress >= 0.8:
+                    if hasattr(self, 'relic_selection_buttons'):
+                        for action, rect in self.relic_selection_buttons.items():
+                            if rect.collidepoint(mouse_pos):
+                                if action == "integrar":
+                                    self.confirm_relic_selection()
+                                elif action == "aplicar":
+                                    self.apply_relic_replace()
+                                elif action == "cancelar":
+                                    if self.relic_selection_replace_mode:
+                                        self.relic_selection_replace_mode = False
+                                        self.relic_selection_replace_idx = -1
+                                    else:
+                                        self.close_relic_selection()
+                                return
+                    if hasattr(self, 'relic_selection_clickable'):
+                        for idx, c_rect in enumerate(self.relic_selection_clickable):
+                            if c_rect.collidepoint(mouse_pos):
+                                if self.relic_selection_replace_mode:
+                                    self.relic_selection_replace_idx = idx
+                                else:
+                                    self.selected_relic_idx = idx
+                                return
+                    self.close_relic_selection()
                     return
 
                 if self.overlay_open and self.booster_anim_progress >= 0.8:
